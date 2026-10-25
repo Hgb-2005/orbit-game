@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101716">
+    <meta name="description" content="微光球场：用鼠标探索、吞噬和生长的单机 Canvas 小游戏。">
+    <title>
+      微光球场 · ORBIT
+    </title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=093">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=093">
+    </script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <!-- 导航、音乐和主题控制；设置保存在浏览器，音频在用户开始游戏后解锁。 -->
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="微光球场首页">
+          <span class="brand-icon" aria-hidden="true">
+            <i>
+            </i>
+            <i>
+            </i>
+            <i>
+            </i>
+          </span>
+          <span>
+            微光球场
+            <small>
+              ORBIT
+            </small>
+          </span>
+        </a>
+        <div class="server-label">
+          <span class="status-dot">
+          </span>
+          单机 / 局域网
+          <span class="tag">
+            SOLO
+          </span>
+        </div>
+        <div class="header-controls">
+          <div id="music-controls" class="music-controls" role="group" aria-label="背景音乐控制" data-muted="false" data-playing="false">
+            <button id="music-toggle" class="icon-button music-toggle" type="button" aria-pressed="true" aria-label="关闭背景音乐" title="开始游戏后播放轻柔背景音乐">
+              <svg class="music-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 18V5l11-2v13M9 9l11-2"/>
+                <ellipse cx="6" cy="18" rx="3" ry="2"/>
+                <ellipse cx="17" cy="16" rx="3" ry="2"/>
+                <path class="music-slash" d="M3 3l18 18"/>
+              </svg>
+              <span id="music-label">音乐开启</span>
+            </button>
+            <label class="music-volume-control" for="music-volume" title="背景音乐音量">
+              <input id="music-volume" type="range" min="0" max="100" step="1" value="30" aria-label="背景音乐音量" aria-valuetext="30%">
+              <output id="music-volume-value" for="music-volume">30%</output>
+            </label>
+          </div>
+          <button id="effects-toggle" class="icon-button effects-toggle" type="button" aria-pressed="true" aria-label="关闭游戏音效" title="独立开关吃食物、吞噬和技能音效">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5L6 9H3v6h3l5 4ZM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/><path class="effects-slash" d="M3 3l18 18"/></svg>
+            <span id="effects-label">音效开启</span>
+          </button>
+          <button id="theme-toggle" class="icon-button theme-toggle" aria-label="切换至浅色模式" title="切换配色" type="button">
+            <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4L19 5"/>
+            </svg>
+            <span id="theme-label">
+              深色模式
+            </span>
+          </button>
+        </div>
+      </header>
+      <main>
+        <section class="page-heading">
+          <div>
+            <p class="eyebrow">
+              <span>
+              </span>
+              EAT. GROW. EXPLORE.
+            </p>
+            <h1>
+              每一点微光，都是成长。
+            </h1>
+            <p class="subtitle">
+              移动鼠标，探索球场。吃掉小点，成为更大的自己。
+            </p>
+          </div>
+          <div class="heading-note">
+            <span class="little-orbit" aria-hidden="true">
+            </span>
+            <span>
+              从小小一颗开始
+              <br>
+              <strong>
+                你的生长，没有终点
+              </strong>
+            </span>
+          </div>
+        </section>
+        <!-- 主画布与独立 HUD。游戏状态由 session.js 提供，DOM 不参与碰撞计算。 -->
+        <div class="game-layout">
+          <section class="arena-panel" aria-label="游戏区域">
+            <div class="arena-toolbar">
+              <div class="arena-title">
+                <span class="status-dot">
+                </span>
+                <h2 id="arena-mode-title">
+                  自由生长
+                </h2>
+                <span id="game-status" class="subtle-tag">
+                  准备就绪
+                </span>
+              </div>
+              <!-- 专注模式收起侧栏，用这条精简 HUD 保留关键数据。 -->
+              <div class="focus-hud" aria-label="专注模式分数">
+                <span>得分 <strong id="focus-score">0</strong></span>
+                <span>最高 <strong id="focus-best">—</strong></span>
+                <span>时间 <strong id="focus-time">00:00</strong></span>
+                <span>质量 <strong id="focus-mass">36</strong></span>
+              </div>
+              <div class="arena-actions">
+                <button id="focus-button" class="text-button" type="button" aria-pressed="false" title="F 键切换专注模式">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4"/></svg>
+                  <span id="focus-label">专注模式</span>
+                </button>
+                <span class="action-divider"></span>
+                <button id="pause-button" class="text-button" type="button" disabled title="空格键暂停">
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M7 5v10m6-10v10"/>
+                  </svg>
+                  <span id="pause-label">
+                    暂停
+                  </span>
+                </button>
+                <span class="action-divider">
+                </span>
+                <button id="restart-button" class="text-button" type="button" title="R 键重新开始">
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M16 7a6.5 6.5 0 1 0 .3 5M16 3v4h-4"/>
+                  </svg>
+                  重新开始
+                </button>
+              </div>
+            </div>
+            <!-- 独立状态条在普通、专注及手机布局中始终可见，不遮住画布提示。 -->
+            <div id="survival-hud" class="survival-hud" aria-label="生存模式状态" hidden>
+              <span class="survival-lives">♥ <strong id="survival-lives">3</strong><span> 条命</span></span>
+              <span>剩余 <strong id="survival-time">05:00</strong></span>
+              <span>击败 <strong id="survival-kills">0</strong></span>
+              <span>在场 <strong id="survival-active">14 / 14</strong></span>
+            </div>
+            <div id="network-hud" class="network-hud" hidden>
+              <span id="network-hint">局域网联机 · 真人不足时自动补人机</span>
+              <span id="network-quality" class="network-quality" data-quality="unknown">等待同步</span>
+              <button id="leave-room" class="text-button" type="button" hidden>退出房间</button>
+            </div>
+            <div id="canvas-container" class="canvas-container">
+              <!-- renderer.js 只绘制这个画布；覆盖层使用 HTML，便于键盘访问。 -->
+              <canvas id="game-canvas" aria-label="微光球场：鼠标或 WASD 移动，鼠标左键或 E 吐孢子，鼠标右键或 Q 分身，靠近绿色刺球会扎刺分裂，空格暂停，F 切换专注模式。" tabindex="0">
+              </canvas>
+              <div class="arena-corner">
+                <span class="live-mark">
+                </span>
+                <span id="arena-caption">
+                  <span id="difficulty-label">Lv.1 · 舒缓探索</span>
+                </span>
+              </div>
+              <div class="canvas-stage" aria-label="当前阶段目标">
+                <span id="canvas-stage">阶段 1 · 初生微光</span>
+                <strong id="canvas-goal">目标 300 分</strong>
+              </div>
+              <div class="hotspot-status" data-phase="normal" title="金圈内食物更密集；最后 5 秒亮起提示，换位后小地图高亮新位置。">
+                <span class="hotspot-dot" aria-hidden="true"></span><span id="hotspot-status">富集区 · 45s 后换位</span>
+              </div>
+              <span id="feedback-announcement" class="screen-reader-only" role="status" aria-live="polite" aria-atomic="true"></span>
+              <!-- 排名按控制者总质量统计，details 让手机上可以随时展开/收起。 -->
+              <details id="leaderboard" class="leaderboard" open>
+                <summary><span>本局排行</span><strong id="leaderboard-rank">—</strong></summary>
+                <div class="leaderboard-body">
+                  <div class="leaderboard-caption"><span id="leaderboard-caption">总质量 · 前五名</span><span id="leaderboard-sync">实时同步</span></div>
+                  <ol id="leaderboard-list" aria-label="本局质量排名"></ol>
+                  <div id="leaderboard-player" class="leaderboard-player">正在统计</div>
+                </div>
+              </details>
+              <div id="milestone-banner" class="milestone-banner" role="status" hidden></div>
+              <div id="protection-hint" class="protection-hint" hidden>
+                出生保护
+                <span id="protection-seconds">
+                  3
+                </span>
+                s
+              </div>
+              <div id="ability-panel" class="ability-panel" hidden>
+                <div class="ability-card">
+                  <button id="split-button" class="sprint-button" type="button" title="朝移动方向分身：单球质量至少 72，最多 8 个分身，10 秒后靠拢自动合体；也可按 Q。" data-state="low">
+                    <span class="ability-main"><span class="ability-symbol" aria-hidden="true">◉</span><span id="split-label">质量不足</span><kbd>右键 / Q</kbd></span>
+                    <span class="sprint-track"><span id="split-progress"></span></span>
+                  </button>
+                  <span class="ability-hint">单球 ≥ 72 · 分裂不扣分</span>
+                </div>
+                <div class="ability-card">
+                  <button id="spore-button" class="sprint-button" type="button" title="吐出一个 8 m 孢子：自身至少需要 48 m，冷却 0.45 秒；也可按 E。" data-state="ready">
+                    <span class="ability-main"><span class="ability-symbol" aria-hidden="true">✦</span><span id="spore-label">吐孢子就绪</span><kbd>左键 / E</kbd></span>
+                    <span class="sprint-track"><span id="spore-progress"></span></span>
+                  </button>
+                  <span class="ability-hint">消耗 8 m · 孢子可被任何球吃掉</span>
+                </div>
+                <div class="cell-status"><strong id="cell-count">1 / 8 分身</strong><span class="group-mass">总质量 <b id="group-mass">36</b></span><span id="cell-quality">最大 36 · 最小 36</span><span id="merge-status">长大后右键分身</span></div>
+              </div>
+              <div id="game-overlay" class="game-overlay">
+                <div class="overlay-card">
+                  <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
+                    <span>
+                    </span>
+                    <i>
+                    </i>
+                    <b>
+                    </b>
+                  </div>
+                  <p id="overlay-eyebrow" class="eyebrow">
+                    A LITTLE LIGHT, A BIG ADVENTURE
+                  </p>
+                  <h2 id="overlay-title">
+                    准备好，开始生长
+                  </h2>
+                  <p id="overlay-description" class="overlay-description">
+                    跟随鼠标，收集散落的微光。
+                    <br>
+                    靠近小球，也小心比你更大的对手。
+                  </p>
+                  <div id="mode-selector" class="mode-selector">
+                    <label for="game-mode">对局模式</label>
+                    <select id="game-mode" aria-describedby="mode-description">
+                      <option value="classic">经典 · 自由生长</option>
+                      <option value="survival">生存 · 5 分钟</option>
+                      <option value="multiplayer">联机 · 真人 + 人机（最多 4 名）</option>
+                    </select>
+                    <p id="mode-description">自由探索，全部分身被吃后结束。</p>
+                  </div>
+                  <div id="multiplayer-panel" class="multiplayer-panel" hidden>
+                    <p id="network-error" class="network-error" role="alert"></p>
+                    <div id="network-connect">
+                      <label for="nickname">你的昵称</label>
+                      <input id="nickname" maxlength="12" autocomplete="nickname" placeholder="1～12 个字">
+                      <button id="create-room" class="primary-button" type="button">创建房间</button>
+                      <div class="room-join">
+                        <label for="room-code-input" class="screen-reader-only">6 位数字房间号</label>
+                        <input id="room-code-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" placeholder="6 位房间号">
+                        <button id="join-room" class="room-button" type="button">加入</button>
+                      </div>
+                      <p id="lan-address" class="room-note">朋友需连接同一 Wi-Fi，并访问房主电脑的局域网地址。</p>
+                    </div>
+                    <div id="network-lobby" hidden>
+                      <div class="room-code">房间号 <strong id="room-number">—</strong></div>
+                      <ol id="room-members" class="room-members" aria-label="房间成员"></ol>
+                      <div class="room-buttons">
+                        <button id="room-ready" class="room-button" type="button" aria-pressed="false">准备</button>
+                        <button id="room-start" class="room-button room-primary" type="button" hidden>开始对局</button>
+                        <button id="room-rematch" class="room-button room-primary" type="button" hidden>返回准备室</button>
+                      </div>
+                      <p id="room-progress" class="room-progress" aria-live="polite"></p>
+                      <p id="room-waiting" class="room-note" role="status"></p>
+                      <div class="room-invitation">
+                        <button id="copy-room-link" class="text-button" type="button">复制邀请链接</button>
+                        <span id="room-copy-status" role="status"></span>
+                        <label for="room-invite" class="screen-reader-only">邀请链接，可选中复制</label>
+                        <input id="room-invite" readonly>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="result-stats" class="result-stats" hidden>
+                    <div>
+                      <span>
+                        本局得分
+                      </span>
+                      <strong id="result-score">
+                        0
+                      </strong>
+                    </div>
+                    <div>
+                      <span>
+                        生存时间
+                      </span>
+                      <strong id="result-time">
+                        00:00
+                      </strong>
+                    </div>
+                  </div>
+                  <p id="survival-result" class="survival-result" hidden></p>
+                  <button id="start-button" class="primary-button" type="button">
+                    <span id="start-label">
+                      开始游戏
+                    </span>
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M4 10h12m-5-5 5 5-5 5"/>
+                    </svg>
+                  </button>
+                  <p id="overlay-footnote" class="overlay-footnote">
+                    无需等待 · 即刻开玩
+                  </p>
+                </div>
+              </div>
+              <div id="toast" class="toast" role="status" hidden>
+              </div>
+            </div>
+            <div class="arena-footer">
+              <div>
+                <span class="legend-dot mint">
+                </span>
+                你的小球
+                <span class="legend-dot coral">
+                </span>
+                <span id="opponent-legend">AI 小球</span>
+              </div>
+              <span>
+                越大，越要从容
+                <span class="footer-spark">
+                  ✧
+                </span>
+              </span>
+            </div>
+          </section>
+          <!-- 分数由 scores.js 同步到 Flask，ui.js 负责显示。 -->
+          <aside class="sidebar" aria-label="分数与游戏说明">
+            <section class="score-card">
+              <div class="card-label">
+                <span>
+                  当前得分
+                </span>
+                <span class="tag">
+                  SCORE
+                </span>
+              </div>
+              <div class="score-line">
+                <strong id="current-score">
+                  0
+                </strong>
+                <span>
+                  pts
+                </span>
+              </div>
+              <div class="best-score">
+                <span>
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="m10 3 2.2 4.4L17 8l-3.5 3.4.8 4.8L10 14l-4.3 2.2.8-4.8L3 8l4.8-.6Z"/>
+                  </svg>
+                  历史最高
+                </span>
+                <strong id="high-score">
+                  —
+                </strong>
+              </div>
+              <div id="save-status" class="save-status" role="status">
+                正在读取记录…
+              </div>
+            </section>
+            <section class="info-card session-card">
+              <h2>
+                <span class="section-icon">
+                  ◷
+                </span>
+                本局状态
+              </h2>
+              <dl class="session-stats">
+                <div>
+                  <dt>
+                    生存时间
+                  </dt>
+                  <dd id="elapsed-time">
+                    00:00
+                  </dd>
+                </div>
+                <div>
+                  <dt>
+                    小球质量
+                  </dt>
+                  <dd>
+                    <span id="player-mass">
+                      36
+                    </span>
+                    <small>
+                      m
+                    </small>
+                  </dd>
+                </div>
+                <div>
+                  <dt>
+                    移动速度
+                  </dt>
+                  <dd>
+                    <span id="player-speed">
+                      220
+                    </span>
+                    <small>
+                      px/s
+                    </small>
+                  </dd>
+                </div>
+                <div>
+                  <dt>
+                    吞噬小球
+                  </dt>
+                  <dd>
+                    <span id="eaten-balls">
+                      0
+                    </span>
+                    <small>
+                      个
+                    </small>
+                  </dd>
+                </div>
+              </dl>
+              <div class="stage-heading"><strong id="stage-name">初生微光</strong><span id="stage-target">0 / 300</span></div>
+              <div class="growth-track">
+                <span id="growth-progress">
+                </span>
+              </div>
+              <p id="growth-hint" class="growth-hint">
+                收集微光，慢慢长大
+              </p>
+            </section>
+            <section class="info-card guide-card">
+              <h2>
+                <span class="section-icon">
+                  ⌘
+                </span>
+                球场生存指南
+              </h2>
+              <div class="guide-item">
+                <span class="guide-number">
+                  01
+                </span>
+                <p>
+                  <strong>
+                    跟随鼠标
+                  </strong>
+                  <span>
+                    指向哪里，就向哪里移动
+                  </span>
+                </p>
+              </div>
+              <div class="guide-item">
+                <span class="guide-number">
+                  02
+                </span>
+                <p>
+                  <strong>
+                    吞噬与成长
+                  </strong>
+                  <span>
+                    吃掉微光和更小的球
+                  </span>
+                </p>
+              </div>
+              <div class="guide-item">
+                <span class="guide-number">
+                  03
+                </span>
+                <p>
+                  <strong>
+                    大有代价
+                  </strong>
+                  <span>
+                    体积越大，移动速度越慢
+                  </span>
+                </p>
+              </div>
+              <div class="keyboard-tips">
+                <span><kbd>右键 / Q</kbd> 分身 · 10s 后合体</span>
+                <span><kbd>左键 / E</kbd> 吐孢子 · 绿色刺球会扎刺分裂</span>
+                <span><kbd>F</kbd> 专注</span>
+                <span>
+                  <kbd>
+                    Space
+                  </kbd>
+                  暂停
+                </span>
+                <span>
+                  <kbd>
+                    R
+                  </kbd>
+                  重启
+                </span>
+              </div>
+              <p class="survival-guide">生存模式：每人 3 条命，吃掉对方最后一个分身加 1 命；被吃扣 1 命，有命立即以 36 m 复活，保护 3 秒。5 分钟后按命数、击败数、质量排名。</p>
+            </section>
+          </aside>
+        </div>
+        <footer class="page-footer">
+          <span>
+            <span class="status-dot">
+            </span>
+            轻量画布，纯粹乐趣。
+          </span>
+          <span>
+            ORBIT
+            <i>
+              /
+            </i>
+            SINGLE PLAYER
+            <i>
+              /
+            </i>
+            V.093
+          </span>
+        </footer>
+        <noscript>
+          <p class="noscript">
+            游戏需要 JavaScript，请在浏览器中启用 JavaScript 后刷新。
+          </p>
+        </noscript>
+      </main>
+    </div>
+  </body>
+</html>
