@@ -118,7 +118,7 @@ class MultiplayerRulesTests(unittest.TestCase):
         self.assertTrue(world.finished)
         self.assertEqual(world.standings()[0]["ownerId"], "0")
 
-    def test_split_sprint_cost_and_automatic_merge(self):
+    def test_split_ignores_removed_sprint_and_automatically_merges(self):
         world = match()
         grow(world.cells["0"][0], 108)
         world.set_input("0", {"seq": 1, "x": 1, "y": 0, "split": True})
@@ -127,13 +127,14 @@ class MultiplayerRulesTests(unittest.TestCase):
         self.assertAlmostEqual(sum(c["mass"] for c in world.cells["0"]), 144)
         world.set_input("0", {"seq": 2, "x": 1, "y": 0, "sprint": True})
         world.update(1 / 30)
-        self.assertAlmostEqual(sum(c["mass"] for c in world.cells["0"]), 144 * .93)
+        self.assertAlmostEqual(sum(c["mass"] for c in world.cells["0"]), 144)
+        self.assertEqual(world.players["0"]["sprintRemaining"], 0)
         self.assertEqual(world.players["0"]["score"], 0)
         self.assertEqual(len(world.cells["0"]), 2)
         for _ in range(400):
             world.update(1 / 30)
         self.assertEqual(len(world.cells["0"]), 1)
-        self.assertAlmostEqual(world.cells["0"][0]["mass"], 144 * .93)
+        self.assertAlmostEqual(world.cells["0"][0]["mass"], 144)
 
     def test_short_key_tap_is_queued_across_network_packets(self):
         world = match()

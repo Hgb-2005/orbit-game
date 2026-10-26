@@ -22,7 +22,7 @@ export class GameUI {
     this.feedbackPhase = "normal";
     this.mode = "classic";
     this.onModeChange = () => {};
-    this.labelObstacles = [...document.querySelectorAll(".arena-corner, .canvas-stage, .hotspot-status, #leaderboard, #protection-hint, #ability-panel, #milestone-banner")];
+    this.labelObstacles = [...document.querySelectorAll(".arena-corner, .canvas-stage, .hotspot-status, #leaderboard, #protection-hint, #ability-panel, #milestone-banner, #touch-joystick")];
     $("leaderboard").open = !window.matchMedia("(max-width: 760px)").matches;
     try {
       this.theme = localStorage.getItem("orbit.theme") === "light" ? "light" : "dark";
@@ -173,7 +173,7 @@ export class GameUI {
   renderLeaderboard(leaderboard) {
     const signature = JSON.stringify({ entries: leaderboard.entries.map(entry => [entry.ownerId, entry.name, entry.rank, entry.movement, Math.round(entry.mass), entry.cells, entry.color]),
       kind: leaderboard.kind, lives: leaderboard.entries.map(entry => [entry.lives, entry.kills]), playerLives: leaderboard.player?.lives,
-      playerKills: leaderboard.player?.kills, playerRank: leaderboard.player?.rank, playerMass: Math.round(leaderboard.player?.mass ?? 0), networkAge: Math.round(leaderboard.networkAge ?? -1), total: leaderboard.total });
+      playerKills: leaderboard.player?.kills, playerRank: leaderboard.player?.rank, playerMass: Math.round(leaderboard.player?.mass ?? 0), settled: leaderboard.settled, networkAge: Math.round(leaderboard.networkAge ?? -1), total: leaderboard.total });
     if (signature === this.lastLeaderboard) return;
     this.lastLeaderboard = signature;
     const rows = leaderboard.entries.map(entry => {
@@ -201,7 +201,7 @@ export class GameUI {
     });
     $("leaderboard-list").replaceChildren(...rows);
     $("leaderboard-caption").textContent = leaderboard.kind === "survival" ? "命数 → 击败 → 质量" : "总质量 · 前五名";
-    $("leaderboard-sync").textContent = leaderboard.networkAge == null ? "实时同步" : `同步 ${Math.round(leaderboard.networkAge)} ms 前`;
+    $("leaderboard-sync").textContent = leaderboard.settled ? "本局已结算" : leaderboard.networkAge == null ? "实时同步" : `同步 ${Math.round(leaderboard.networkAge)} ms 前`;
     $("leaderboard-rank").textContent = leaderboard.player ? `你 #${leaderboard.player.rank}` : "已出局";
     $("leaderboard-player").textContent = leaderboard.player ?
       `你的名次 ${leaderboard.player.rank} / ${leaderboard.total} · ${leaderboard.kind === "survival" ? `${leaderboard.player.lives}命 · ${leaderboard.player.kills}次击败 · ` : ""}${number(leaderboard.player.mass)} m` : "本局全部分身已被吞噬";
@@ -220,6 +220,15 @@ export class GameUI {
 
   render(snapshot, feedback = { skills: {}, hotspots: { phase: "normal" } }) {
     this.lastSnapshot = snapshot;
+    document.body.dataset.playing = String(snapshot.state === "playing" && !snapshot.spectating);
+    $("team-hud").hidden = !snapshot.team || snapshot.state === "ready";
+    if (snapshot.team) {
+      for (const team of snapshot.team.standings) {
+        const element = $(team.id === 0 ? "team-mint" : "team-nebula");
+        element.textContent = `${team.name}${team.isPlayer ? "（你）" : ""} · ${team.lives} 命 · ${team.kills} 杀 · ${number(team.mass)} m`;
+        element.dataset.leading = String(team.rank === 1);
+      }
+    }
     const survival = snapshot.survival;
     $("survival-hud").hidden = !survival || snapshot.state === "ready";
     $("survival-hud").dataset.urgent = String(Boolean(survival && survival.remaining <= 30));
@@ -229,7 +238,7 @@ export class GameUI {
       $("survival-kills").textContent = survival.player.kills;
       $("survival-active").textContent = `${survival.active} / ${survival.total}`;
     }
-    $("arena-mode-title").textContent = snapshot.network ? "联机生存" : (snapshot.state === "ready" ? this.mode : snapshot.mode) === "survival" ? "生存 · 5 分钟" : "自由生长";
+    $("arena-mode-title").textContent = snapshot.network ? snapshot.network.room?.rules?.mode === "teams" ? "联机 · 2v2 团队" : "联机 · 生存乱斗" : (snapshot.state === "ready" ? this.mode : snapshot.mode) === "survival" ? "生存 · 5 分钟" : "自由生长";
     $("opponent-legend").textContent = snapshot.network ? "其他玩家" : "AI 小球";
     $("restart-button").disabled = Boolean(snapshot.network);
     if (snapshot.network) $("game-status").textContent = snapshot.spectating ? "观战中" : snapshot.state === "playing" ? "联机中" : snapshot.state === "gameover" ? "本局结束" : "准备室";
@@ -252,7 +261,7 @@ export class GameUI {
     $("focus-mass").textContent = number(snapshot.player.mass);
     $("group-mass").textContent = number(snapshot.player.mass);
     $("hotspot-status").textContent = `富集区 · ${Math.ceil(snapshot.hotspots.remaining)}s 后换位`;
-    this.renderLeaderboard({ ...snapshot.leaderboard, networkAge: snapshot.network?.stateAge == null ? null : snapshot.network.stateAge * 1000 });
+    this.renderLeaderboard({ ...snapshot.leaderboard, settled: snapshot.state === "gameover", networkAge: snapshot.state === "gameover" || snapshot.network?.stateAge == null ? null : snapshot.network.stateAge * 1000 });
     $("ability-panel").hidden = snapshot.state === "ready" || snapshot.state === "gameover" || snapshot.spectating;
     $("split-button").disabled = snapshot.state !== "playing" || !split.ready;
     $("split-button").dataset.state = split.count >= split.maxCells || !split.affordable ? "low" : split.cooldown > 0 ? "cooldown" : "ready";
@@ -273,6 +282,8 @@ export class GameUI {
     if (this.lastState === snapshot.state) return;
     this.lastState = snapshot.state;
     this.renderOverlay(snapshot);
+    // 结算/返回准备室时从标题开始，避免沿用上次房间表单的滚动位置。
+    $("game-overlay").firstElementChild.scrollTop = 0;
   }
 
   renderOverlay(snapshot) {
@@ -289,7 +300,7 @@ export class GameUI {
     $("mode-description").textContent = this.mode === "survival" ?
       "每人 3 命 · 吃人加命 · 36 m 复活 · 限时 5 分钟" : "自由探索，全部分身被吃后结束。";
     if (this.mode === "multiplayer") $("mode-description").textContent = "同一局域网 · 真人不足时自动补人机 · 全员准备后开局";
-    $("arena-mode-title").textContent = snapshot.network ? "联机生存" : (state === "ready" ? this.mode : snapshot.mode) === "survival" ? "生存 · 5 分钟" : "自由生长";
+    $("arena-mode-title").textContent = snapshot.network ? snapshot.network.room?.rules?.mode === "teams" ? "联机 · 2v2 团队" : "联机 · 生存乱斗" : (state === "ready" ? this.mode : snapshot.mode) === "survival" ? "生存 · 5 分钟" : "自由生长";
     $("survival-result").hidden = !(state === "gameover" && snapshot.survival);
     if (state === "playing") return;
 
@@ -315,15 +326,22 @@ export class GameUI {
         title: result.reason === "eliminated" ? "生命耗尽，本局结束" : result.won ? "生存冠军，守住了微光" : "时间到，生存挑战完成",
         description: result.reason === "eliminated" ? `最后的对手是「${snapshot.killer}」。本局获得第 ${result.rank} 名，重开可再挑战。` :
           result.reason === "last-survivor" ? "你成为场上最后一位幸存者，提前获胜。" :
-          `五分钟结束，${result.winners.length > 1 ? "并列领先" : "本局领先"}：${result.winners.join("、")}。按剩余命数、击败数、总质量结算。`,
+          `${snapshot.survival.duration / 60} 分钟结束，${result.winners.length > 1 ? "并列领先" : "本局领先"}：${result.winners.join("、")}。按剩余命数、击败数、总质量结算。`,
         button: "再来一局", footnote: this.isNewRecord ? "刷新历史最高分 · 正在自动保存" : "选择模式，再开始下一局",
       };
       $("survival-result").textContent = `第 ${result.rank} / ${snapshot.survival.total} 名 · 剩余 ${result.lives} 命 · 击败 ${result.kills} 次 · 复活 ${result.deaths - (result.lives === 0 ? 1 : 0)} 次`;
+      if (result.teamMode) {
+        copy.eyebrow = result.won ? "TEAM VICTORY" : "TEAM ROUND COMPLETE";
+        copy.title = result.won ? `${snapshot.team.name}，守住了微光` : "团队挑战完成";
+        copy.description = result.reason === "last-team" ? `${result.winners.join("、")}成为场上最后存活的队伍，提前获胜。` :
+          `${snapshot.survival.duration / 60} 分钟结束，领先队伍：${result.winners.join("、")}。按团队总命数、击败、总质量结算。`;
+        $("survival-result").textContent = `团队第 ${result.rank} 名 · 你剩余 ${result.lives} 命 · 个人击败 ${result.kills} 次`;
+      }
     }
     if (snapshot.network && state === "ready") copy = {
       eyebrow: "PLAY TOGETHER", title: snapshot.network.room ? "朋友到齐，就出发" : "和朋友一起，守住微光",
-      description: snapshot.network.room ? "每人 3 条命，吃人加命，36 m 复活。真人全部准备后，由房主开始五分钟生存局，空位自动补人机。" :
-        "连接同一 Wi-Fi，创建房间，邀请 0～3 位朋友一起玩；真人不足的空位会自动补人机。", footnote: "联机期间持续计时 · 退出或断线按出局处理",
+      description: snapshot.network.room ? `每人 3 条命，吃人加命，36 m 复活。全员准备后开始 ${snapshot.network.room.rules?.duration / 60 || 5} 分钟对局，空位自动补人机。` :
+        "连接同一 Wi-Fi，创建房间，可选生存乱斗或 2v2 团队；真人不足的空位自动补人机。", footnote: "联机持续计时 · 网络断开保留 10 秒恢复窗口",
       button: "开始对局",
     };
     $("overlay-eyebrow").textContent = copy.eyebrow;

@@ -1,6 +1,8 @@
+import { TouchJoystick } from "./touch-joystick.js";
+
 /** 输入统一转换成 [-1, 1] 的方向向量，与网络和物理更新无关。 */
 export class InputController {
-  constructor(canvas) {
+  constructor(canvas, joystickElement = null) {
     this.canvas = canvas;
     this.pointer = null;
     this.keys = new Set();
@@ -8,13 +10,18 @@ export class InputController {
     this.sporeQueued = false;
     this.splitQueued = false;
     this.onCommand = () => {};
+    this.joystick = joystickElement ? new TouchJoystick(joystickElement, () => {
+      this.mode = "joystick"; this.pointer = null;
+    }) : null;
 
     canvas.addEventListener("pointermove", event => {
+      if (this.joystick?.active) return;
       const rect = canvas.getBoundingClientRect();
       this.pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       this.mode = "pointer";
     });
     canvas.addEventListener("pointerdown", event => {
+      if (this.joystick?.active) return;
       const rect = canvas.getBoundingClientRect();
       this.pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       this.mode = "pointer";
@@ -78,6 +85,7 @@ export class InputController {
     this.keys.clear();
     this.sporeQueued = false;
     this.splitQueued = false;
+    this.joystick?.reset();
   }
 
   requestSplit() {
@@ -107,6 +115,8 @@ export class InputController {
   }
 
   getDirection(screenPosition) {
+    if (this.joystick?.active) return { ...this.joystick.vector };
+    if (this.mode === "joystick") return { x: 0, y: 0 };
     if (this.mode === "keyboard") {
       const x = Number(this.keys.has("d") || this.keys.has("arrowright")) - Number(this.keys.has("a") || this.keys.has("arrowleft"));
       const y = Number(this.keys.has("s") || this.keys.has("arrowdown")) - Number(this.keys.has("w") || this.keys.has("arrowup"));

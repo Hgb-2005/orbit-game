@@ -22,6 +22,7 @@ def ball(ball_id, owner, position):
               "name": owner["name"], "color": owner["color"], "mass": 0,
               "vx": 0, "vy": 0, "impulseX": 0, "impulseY": 0,
               "mergeRemaining": 0, "alive": True, "isPlayer": False}
+    entity["team"] = owner.get("team")
     entity["spikeCooldown"] = 0
     grow(entity, INITIAL_MASS)
     return entity

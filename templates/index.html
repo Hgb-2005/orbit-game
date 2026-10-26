@@ -4,13 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#101716">
-    <meta name="description" content="微光球场：用鼠标探索、吞噬和生长的单机 Canvas 小游戏。">
+    <meta name="description" content="微光球场：Flask 与 Canvas 吞噬游戏，支持生存乱斗、2v2 团队、真人与人机联机。">
     <title>
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=093">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=093">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0100">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0100">
     </script>
   </head>
   <body>
@@ -156,7 +156,13 @@
               <span id="network-quality" class="network-quality" data-quality="unknown">等待同步</span>
               <button id="leave-room" class="text-button" type="button" hidden>退出房间</button>
             </div>
+            <div id="team-hud" class="team-hud" aria-label="团队比分" hidden>
+              <span id="team-mint"></span><span id="team-nebula"></span>
+            </div>
             <div id="canvas-container" class="canvas-container">
+              <div id="touch-joystick" class="touch-joystick" role="group" aria-label="触屏移动摇杆，拖动控制方向" data-active="false">
+                <span class="joystick-thumb"></span><span class="joystick-caption">移动</span>
+              </div>
               <!-- renderer.js 只绘制这个画布；覆盖层使用 HTML，便于键盘访问。 -->
               <canvas id="game-canvas" aria-label="微光球场：鼠标或 WASD 移动，鼠标左键或 E 吐孢子，鼠标右键或 Q 分身，靠近绿色刺球会扎刺分裂，空格暂停，F 切换专注模式。" tabindex="0">
               </canvas>
@@ -244,6 +250,10 @@
                     <div id="network-connect">
                       <label for="nickname">你的昵称</label>
                       <input id="nickname" maxlength="12" autocomplete="nickname" placeholder="1～12 个字">
+                      <div class="room-rules">
+                        <label>对局玩法<select id="new-room-mode"><option value="survival">生存乱斗</option><option value="teams">2v2 团队</option></select></label>
+                        <label>对局时长<select id="new-room-duration"><option value="180">3 分钟</option><option value="300" selected>5 分钟</option><option value="480">8 分钟</option></select></label>
+                      </div>
                       <button id="create-room" class="primary-button" type="button">创建房间</button>
                       <div class="room-join">
                         <label for="room-code-input" class="screen-reader-only">6 位数字房间号</label>
@@ -254,6 +264,11 @@
                     </div>
                     <div id="network-lobby" hidden>
                       <div class="room-code">房间号 <strong id="room-number">—</strong></div>
+                      <div class="room-rules">
+                        <label>对局玩法<select id="room-mode"><option value="survival">生存乱斗</option><option value="teams">2v2 团队</option></select></label>
+                        <label>对局时长<select id="room-duration"><option value="180">3 分钟</option><option value="300">5 分钟</option><option value="480">8 分钟</option></select></label>
+                      </div>
+                      <p id="room-rules-note" class="room-note"></p>
                       <ol id="room-members" class="room-members" aria-label="房间成员"></ol>
                       <div class="room-buttons">
                         <button id="room-ready" class="room-button" type="button" aria-pressed="false">准备</button>
@@ -503,7 +518,7 @@
             <i>
               /
             </i>
-            V.093
+            V.0100
           </span>
         </footer>
         <noscript>

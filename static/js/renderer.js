@@ -21,6 +21,7 @@ export class Renderer {
     this.labelObstacles = [];
     this.labelPlacements = [];
     this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.touchQuery = window.matchMedia("(pointer: coarse), (max-width: 760px)");
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas.parentElement);
     this.resize();
@@ -28,6 +29,7 @@ export class Renderer {
 
   resize() {
     const rect = this.canvas.getBoundingClientRect();
+    this.touchMode = this.touchQuery.matches;
     this.width = rect.width;
     this.height = rect.height;
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -225,7 +227,7 @@ export class Renderer {
     const { ctx } = this;
     const protectedPlayer = snapshot.survival ? snapshot.survival.protectionByOwner[ball.ownerId] > 0 :
       ball.isPlayer && snapshot.protectionRemaining > 0;
-    const fill = ball.isPlayer ? colors.player : ball.color;
+    const fill = snapshot.team ? ball.color : ball.isPlayer ? colors.player : ball.color;
     ctx.save();
     ctx.fillStyle = fill;
     ctx.globalAlpha = ball.isPlayer ? 1 : 0.88;
@@ -233,6 +235,13 @@ export class Renderer {
     ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
+    if (ball.isAlly || (snapshot.team && ball.isPlayer)) {
+      ctx.strokeStyle = snapshot.team.color;
+      ctx.lineWidth = (ball.isPlayer ? 2.5 : 1.5) / this.camera.zoom;
+      ctx.setLineDash(ball.isPlayer ? [] : [5 / this.camera.zoom, 4 / this.camera.zoom]);
+      ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius + 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.strokeStyle = fill;
     ctx.lineWidth = 1;
     ctx.globalAlpha = ball.isPlayer && snapshot.sprint.active ? 0.75 : 0.18;
@@ -332,7 +341,7 @@ export class Renderer {
     const width = this.width < 500 ? 96 : 119;
     const height = width * snapshot.bounds.height / snapshot.bounds.width;
     const x = this.width - width - 16;
-    const y = this.height - height - 18;
+    const y = this.height - height - (this.touchMode && snapshot.state === "playing" && !snapshot.spectating ? 175 : 18);
     const sx = width / snapshot.bounds.width;
     const sy = height / snapshot.bounds.height;
     return { x, y, width, height, sx, sy };
@@ -410,7 +419,7 @@ export class Renderer {
     }
     ctx.globalAlpha = 1;
     for (const cell of snapshot.playerCells) {
-      ctx.fillStyle = colors.player;
+      ctx.fillStyle = snapshot.team ? snapshot.team.color : colors.player;
       ctx.beginPath();
       ctx.arc(x + cell.x * sx, y + cell.y * sy, 3.2, 0, Math.PI * 2);
       ctx.fill();

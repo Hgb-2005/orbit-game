@@ -1,5 +1,6 @@
 import { summarizeCells } from "../core/cells.js";
 import { getDifficulty, getStage } from "../core/progression.js";
+import { PositionBuffer } from "./position-buffer.js";
 
 /** 远程会话只发送输入和读取快照，永不在客户端计算吞噬、生命或分数。 */
 export class RemoteSession {
@@ -13,6 +14,12 @@ export class RemoteSession {
     this.room = null;
     this.raw = null;
     this.foods = [];
+    this.foodVersion = -1;
+    this.foodRound = "";
+    this.foodResyncPending = false;
+    this.positionBuffer = new PositionBuffer();
+    this.traffic = [];
+    this.lastActions = { split: false, spore: false };
     this.state = "ready";
     this.connection = "idle";
     this.error = "";
@@ -66,6 +73,9 @@ export class RemoteSession {
         if (socket !== this.socket) return;
         let message;
         try { message = JSON.parse(event.data); } catch { return; }
+        const now = performance.now();
+        this.traffic = this.traffic.filter(sample => now - sample.time < 1000);
+        this.traffic.push({ time: now, bytes: new TextEncoder().encode(event.data).length });
         if (message.type === "welcome") {
           if (resume && resumeToken) {
             this.resumePending = true;
@@ -131,13 +141,13 @@ export class RemoteSession {
     return true;
   }
 
-  async enter(type, name, code) {
+  async enter(type, name, code, rules) {
     try {
       this.manualClose = false;
       this.cancelReconnect();
       await this.connect();
       this.error = "";
-      this.send({ type, name: name.trim(), code: code?.trim() });
+      this.send({ type, name: name.trim(), code: code?.trim(), ...(type === "create" && rules ? { rules } : {}) });
     } catch (error) { this.error = error.message; }
     this.onChange();
   }
@@ -149,6 +159,7 @@ export class RemoteSession {
       this.connection = "connected";
       this.error = "";
       this.reconnectAttempt = 0;
+      this.positionBuffer.reset();
       this.inactive = !this.resumeInputAfterReconnect;
       this.events.push({ type: "networkresume" });
       this.finishConnection?.();
@@ -158,15 +169,21 @@ export class RemoteSession {
       if (message.state === "waiting") {
         this.raw = null; this.state = "ready"; this.positions.clear(); this.events = [];
         this.roundId = ""; this.eventCursor = 0; this.seq = 0; this.stateReceivedAt = 0; this.previousRanks.clear(); this.rankMovement.clear();
+        this.resetReplication();
       }
       this.error = ""; this.onChange();
     } else if (message.type === "left") {
       this.room = null; this.raw = null; this.state = "ready"; this.roundId = "";
       this.positions.clear(); this.events = []; this.stateReceivedAt = 0; this.previousRanks.clear(); this.rankMovement.clear(); this.error = ""; this.onChange();
+      this.resetReplication();
     } else if (message.type === "error") {
       this.error = message.message;
       if (this.resumePending) {
         this.resumePending = false;
+        if (message.code === "resume_expired") {
+          this.room = null; this.raw = null; this.roundId = ""; this.state = "ready";
+          this.positions.clear(); this.resetReplication(); this.cancelReconnect();
+        }
         this.socket?.close();
       }
       this.onChange();
@@ -175,16 +192,34 @@ export class RemoteSession {
     } else if (message.type === "pong") {
       if (Number.isFinite(message.sent)) this.rtt = Math.max(0, Math.round(performance.now() - message.sent));
     } else if (message.type === "foods" && message.roundId === this.room?.roundId) {
+      if (this.foodRound === message.roundId && (message.version ?? 0) < this.foodVersion) return;
       this.foods = message.foods;
+      this.foodVersion = message.version ?? 0;
+      this.foodRound = message.roundId;
+      this.foodResyncPending = false;
+    } else if (message.type === "food_patch" && message.roundId === this.room?.roundId) {
+      if (this.foodRound === message.roundId && message.version <= this.foodVersion) return;
+      if (this.foodRound !== message.roundId || message.baseVersion !== this.foodVersion) {
+        if (!this.foodResyncPending) this.foodResyncPending = this.send({ type: "resync_foods", roundId: message.roundId });
+        return;
+      }
+      const foods = new Map(this.foods.map(food => [food.id, food]));
+      for (const id of message.removed) foods.delete(id);
+      for (const food of message.upsert) foods.set(food.id, food);
+      this.foods = [...foods.values()];
+      this.foodVersion = message.version;
     } else if (message.type === "state" && this.room && this.room.state !== "waiting" && message.roundId === this.room.roundId) {
       const newRound = this.roundId !== message.roundId;
+      if (!newRound && message.world.tick < this.raw?.tick) return;
       if (newRound) {
         this.roundId = message.roundId; this.eventCursor = 0; this.seq = 0;
         this.positions.clear(); this.previousRanks.clear(); this.rankMovement.clear(); this.events = [{ type: "networkstart" }];
         this.sendTimer = .05; this.queued = { split: false, spore: false }; this.inactive = false;
+        this.positionBuffer.reset(); this.lastActions = { split: false, spore: false };
       }
       this.raw = message.world;
       this.stateReceivedAt = performance.now();
+      this.positionBuffer.push(this.raw, this.stateReceivedAt);
       this.state = this.raw.finished ? "gameover" : "playing";
       const nextRanks = new Map();
       for (const entry of this.raw.standings) {
@@ -213,7 +248,13 @@ export class RemoteSession {
   stop() {
     this.inactive = true;
     this.queued = { split: false, spore: false };
+    this.lastActions = { split: false, spore: false };
     this.send({ type: "stop" });
+  }
+
+  resetReplication() {
+    this.foods = []; this.foodVersion = -1; this.foodRound = ""; this.foodResyncPending = false;
+    this.positionBuffer.reset(); this.lastActions = { split: false, spore: false };
   }
 
   resumeInput() { this.inactive = false; }
@@ -226,6 +267,7 @@ export class RemoteSession {
   ready(value) { this.send({ type: "ready", ready: value }); }
   start() { this.send({ type: "start" }); }
   rematch() { this.send({ type: "rematch" }); }
+  configure(rules) { this.send({ type: "configure", rules }); }
 
   close() {
     this.manualClose = true;
@@ -249,8 +291,11 @@ export class RemoteSession {
         if (!position) continue;
         // 用服务器速度做最多 120ms 的视觉外推，减少 15～20Hz 快照之间的停顿；
         // 下一份权威快照到达后仍会快速校正，质量和规则始终来自服务器。
-        const predictedX = cell.x + Number(cell.vx || 0) * age;
-        const predictedY = cell.y + Number(cell.vy || 0) * age;
+        const target = cell.ownerId === this.playerId
+          ? { x: cell.x + Number(cell.vx || 0) * age, y: cell.y + Number(cell.vy || 0) * age }
+          : this.positionBuffer.sample(cell);
+        const predictedX = Math.max(cell.radius, Math.min(this.raw.bounds.width - cell.radius, target.x));
+        const predictedY = Math.max(cell.radius, Math.min(this.raw.bounds.height - cell.radius, target.y));
         if (Math.hypot(predictedX - position.x, predictedY - position.y) > 450) Object.assign(position, { x: cell.x, y: cell.y });
         else { position.x += (predictedX - position.x) * alpha; position.y += (predictedY - position.y) * alpha; }
       }
@@ -258,9 +303,12 @@ export class RemoteSession {
     if (this.state === "playing" && !this.inactive) {
       this.queued.split ||= Boolean(input.split);
       this.queued.spore ||= Boolean(input.spore);
+      const actionPressed = (input.split && !this.lastActions.split) || (input.spore && !this.lastActions.spore);
+      this.lastActions = { split: Boolean(input.split), spore: Boolean(input.spore) };
       this.sendTimer += dt;
-      if (this.sendTimer >= 1 / 30) {
-        this.sendTimer -= 1 / 30;
+      // 技能按下立即发送；普通移动维持 30Hz，卡顿后不补发一串过期输入。
+      if (this.sendTimer >= 1 / 30 || actionPressed) {
+        this.sendTimer = 0;
         if (this.send({ type: "input", roundId: this.roundId, seq: this.seq++, x: input.x, y: input.y,
           target: input.target, split: this.queued.split, spore: this.queued.spore })) {
           this.queued = { split: false, spore: false };
@@ -277,24 +325,32 @@ export class RemoteSession {
   getSnapshot() {
     const networkOwner = this.raw?.players?.find(entry => entry.ownerId === this.playerId);
     const age = this.stateReceivedAt ? Math.max(0, (performance.now() - this.stateReceivedAt) / 1000) : null;
-    const pendingInputs = networkOwner && Number.isInteger(networkOwner.ack) ? Math.max(0, this.seq - 1 - networkOwner.ack) : 0;
+    const pendingInputs = this.state === "playing" && networkOwner && Number.isInteger(networkOwner.ack) ? Math.max(0, this.seq - 1 - networkOwner.ack) : 0;
+    const now = performance.now();
+    const downloadKBps = this.traffic.reduce((bytes, sample) => now - sample.time < 1000 ? bytes + sample.bytes : bytes, 0) / 1024;
     const network = { connection: this.connection, error: this.error, room: this.room, playerId: this.playerId,
-      rtt: this.rtt, inactive: this.inactive, stateAge: age, pendingInputs,
-      quality: this.connection === "reconnecting" ? "reconnecting" : this.connection !== "connected" ? "offline" : this.rtt === null ? "unknown" : this.rtt <= 80 && pendingInputs <= 2 ? "good" : this.rtt <= 180 && pendingInputs <= 6 ? "fair" : "poor" };
+      rtt: this.rtt, inactive: this.inactive, stateAge: age, pendingInputs, downloadKBps,
+      jitter: Math.round(this.positionBuffer.jitter), interpolationDelay: Math.round(this.positionBuffer.delay * 1000),
+      quality: this.connection === "reconnecting" ? "reconnecting" : this.connection !== "connected" ? "offline" : this.state === "playing" && age !== null && age > .5 ? "poor" : this.rtt === null ? "unknown" : this.rtt <= 80 && pendingInputs <= 2 ? "good" : this.rtt <= 180 && pendingInputs <= 6 ? "fair" : "poor" };
     if (!this.raw) return { ...this.placeholder, state: "ready", network };
     const raw = this.raw;
-    const cells = raw.cells.map(cell => ({ ...cell, ...this.positions.get(cell.id), isPlayer: cell.ownerId === this.playerId }));
+    const owner = raw.players.find(owner => owner.ownerId === this.playerId);
+    const teamMode = raw.rules?.mode === "teams";
+    const teamStandings = (raw.teams || []).map(team => ({ ...team, isPlayer: team.id === owner.team }));
+    const myTeam = teamStandings.find(team => team.isPlayer);
+    const cells = raw.cells.map(cell => ({ ...cell, ...this.positions.get(cell.id), isPlayer: cell.ownerId === this.playerId,
+      isAlly: teamMode && cell.ownerId !== this.playerId && cell.team === owner.team }));
     const playerCells = cells.filter(cell => cell.isPlayer);
     const opponents = cells.filter(cell => !cell.isPlayer);
-    const owner = raw.players.find(owner => owner.ownerId === this.playerId);
     const standings = raw.standings.map(entry => ({ ...entry, movement: this.rankMovement.get(entry.ownerId) ?? 0, isPlayer: entry.ownerId === this.playerId }));
     const me = standings.find(entry => entry.isPlayer);
     const followed = cells.reduce((largest, cell) => !largest || cell.mass > largest.mass ? cell : largest, null);
     const fallback = followed ?? this.placeholder.player;
     const player = summarizeCells(playerCells, fallback);
-    const winners = standings.filter(entry => entry.rank === 1).map(entry => entry.name);
+    const winners = (teamMode ? teamStandings : standings).filter(entry => entry.rank === 1).map(entry => entry.name);
     return {
       network, mode: "survival", state: this.state, spectating: me.lives <= 0,
+      team: teamMode ? { ...myTeam, standings: teamStandings } : null,
       bounds: raw.bounds, player, playerCells, bots: opponents, foods: this.foods, spores: raw.spores || [], spikes: raw.spikes || [],
       score: owner.score, elapsed: raw.elapsed, eatenBalls: owner.eatenBalls, killer: owner.killer,
       protectionRemaining: raw.protectionByOwner[this.playerId] ?? 0,
@@ -305,8 +361,10 @@ export class RemoteSession {
       survival: { duration: raw.duration, remaining: Math.max(0, raw.duration - raw.elapsed), player: me,
         active: standings.filter(entry => !entry.eliminated).length, total: standings.length, standings,
         protectionByOwner: raw.protectionByOwner },
-      result: raw.finished ? { reason: me.lives <= 0 ? "eliminated" : raw.reason, rank: me.rank,
-        lives: me.lives, kills: me.kills, deaths: me.deaths, won: me.lives > 0 && me.rank === 1, winners } : null,
+      result: raw.finished ? { reason: !teamMode && me.lives <= 0 ? "eliminated" : raw.reason,
+        rank: teamMode ? myTeam.rank : me.rank, teamMode,
+        lives: me.lives, kills: me.kills, deaths: me.deaths,
+        won: teamMode ? myTeam.rank === 1 && myTeam.active > 0 : me.lives > 0 && me.rank === 1, winners } : null,
     };
   }
 }

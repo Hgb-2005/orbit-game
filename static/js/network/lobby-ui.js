@@ -20,7 +20,8 @@ export class LobbyUI {
       const name = $("nickname").value.trim();
       if (!name || name.length > 12) { $("network-error").textContent = "请输入 1～12 个字的昵称。"; $("nickname").focus(); return; }
       try { localStorage.setItem("orbit.nickname", name); } catch { /* 无需存储也能联机。 */ }
-      void this.getSession()?.enter(type, name, $("room-code-input").value);
+      void this.getSession()?.enter(type, name, $("room-code-input").value,
+        { mode: $("new-room-mode").value, duration: Number($("new-room-duration").value) });
     };
     $("create-room").addEventListener("click", () => enter("create"));
     $("join-room").addEventListener("click", () => enter("join"));
@@ -36,6 +37,9 @@ export class LobbyUI {
     $("room-start").addEventListener("click", () => this.getSession()?.start());
     $("room-rematch").addEventListener("click", () => this.getSession()?.rematch());
     $("leave-room").addEventListener("click", () => this.getSession()?.leave());
+    const configure = () => this.getSession()?.configure({ mode: $("room-mode").value, duration: Number($("room-duration").value) });
+    $("room-mode").addEventListener("change", configure);
+    $("room-duration").addEventListener("change", configure);
     $("copy-room-link").addEventListener("click", async () => {
       const url = new URL(this.inviteOrigin);
       url.search = new URLSearchParams({ room: this.getSession().room.code }).toString();
@@ -58,14 +62,16 @@ export class LobbyUI {
     const host = room?.hostId === playerId;
     $("network-error").textContent = error;
     const qualityText = { good: "连接良好", fair: "连接一般", poor: "延迟较高", unknown: "等待同步", offline: "未连接", reconnecting: "正在重连" }[quality] || "等待同步";
-    $("network-quality").textContent = rtt === null ? qualityText : `${qualityText} · ${rtt} ms`;
+    $("network-quality").textContent = rtt === null ? qualityText : `${qualityText} · ${rtt} ms${snapshot.state === "playing" ? ` · ${network.downloadKBps.toFixed(1)} KB/s` : ""}`;
+    $("network-quality").title = `网络波动 ${network.jitter} ms · 对手插值缓冲 ${network.interpolationDelay} ms`;
     $("network-quality").dataset.quality = quality || "unknown";
     $("network-connect").hidden = Boolean(room);
     $("network-lobby").hidden = !room;
     $("leave-room").hidden = !room;
     const aiCount = room?.aiCount ?? Math.max(0, (room?.capacity ?? 4) - (room?.members.length ?? 0));
-    $("network-hint").textContent = connection === "connecting" ? "正在连接服务器…" : connection === "reconnecting" ? "连接中断 · 正在恢复本局…" : !room ? "局域网联机 · 真人不足时自动补人机 · 每局 5 分钟" :
-      `房间 ${room.code} · 真人 ${room.members.length}/${room.capacity ?? 4} · 人机 ${aiCount}${snapshot.spectating ? " · 已出局，观战中" : network.inactive && snapshot.state === "playing" ? " · 已停止操作，对局继续" : ""}${rtt === null ? "" : ` · ${rtt} ms`}`;
+    const ruleLabel = room?.rules?.mode === "teams" ? "2v2 团队" : "生存乱斗";
+    $("network-hint").textContent = connection === "connecting" ? "正在连接服务器…" : connection === "reconnecting" ? "连接中断 · 正在恢复本局…" : !room ? "局域网联机 · 支持生存乱斗 / 2v2 团队 · 空位自动补人机" :
+      `房间 ${room.code} · ${ruleLabel} · 真人 ${room.members.length}/${room.capacity ?? 4} · 人机 ${aiCount}${snapshot.state === "gameover" ? " · 本局已结束" : snapshot.spectating ? " · 已出局，观战中" : network.inactive && snapshot.state === "playing" ? " · 已停止操作，对局继续" : ""}`;
     $("create-room").disabled = $("join-room").disabled = ["connecting", "reconnecting"].includes(connection);
     if (!room) { this.signature = ""; return; }
     $("room-number").textContent = room.code;
@@ -73,12 +79,18 @@ export class LobbyUI {
     $("room-ready").textContent = me?.ready ? "取消准备" : "准备";
     $("room-ready").setAttribute("aria-pressed", String(Boolean(me?.ready)));
     $("room-start").hidden = !host || room.state !== "waiting";
-    $("room-start").disabled = !room.members.length || !room.members.every(member => member.ready);
+    const allReady = room.members.length > 0 && room.members.every(member => member.ready && member.connected !== false);
+    $("room-start").disabled = !allReady;
+    $("room-mode").disabled = $("room-duration").disabled = !host || room.state !== "waiting" || connection !== "connected";
+    $("room-mode").value = room.rules?.mode || "survival";
+    $("room-duration").value = String(room.rules?.duration || 300);
+    $("room-rules-note").textContent = `${ruleLabel} · ${(room.rules?.duration || 300) / 60} 分钟。${room.rules?.mode === "teams" ? "按席位交替分成两队；队友不能互吃，可吐孢子喂队友，按团队总命数、击败和质量结算。" : "每人 3 命，吃人加命；按个人命数、击败和质量结算。"}${host ? " 房主改规则后需要重新准备。" : " 规则由房主在准备室设置。"}`;
     $("room-rematch").hidden = !host || room.state !== "finished";
     const readyCount = room.members.filter(member => member.ready).length;
     $("room-progress").textContent = room.state === "waiting" ? `${readyCount} / ${room.members.length} 位真人已准备 · 空位自动补人机` : room.state === "finished" ? "本局已结束" : `本局进行中 · 人机 ${aiCount}`;
     $("room-waiting").textContent = room.state === "finished" ? (host ? "点击“返回准备室”，所有人重新准备即可再来一局。" : "等待房主返回准备室，再准备下一局。") :
-      !room.members.every(member => member.ready) ? `还差 ${room.members.length - readyCount} 位真人准备，房主准备后即可开始。` : "所有真人已准备，房主可以开始；空位会自动补足为人机。";
+      room.members.some(member => member.connected === false) ? "有成员正在重连，恢复连接后才能开始。" :
+      !allReady ? `还差 ${room.members.length - readyCount} 位真人准备，全员准备后房主即可开始。` : "所有真人已准备，房主可以开始；空位会自动补足为人机。";
     const signature = JSON.stringify({ room, playerId });
     if (signature === this.signature) return;
     this.signature = signature;
@@ -88,7 +100,9 @@ export class LobbyUI {
     $("room-invite").value = url.href;
     $("room-members").replaceChildren(...room.members.map(member => {
       const row = document.createElement("li"), name = document.createElement("span"), status = document.createElement("strong");
-      name.textContent = `${member.name}${member.id === playerId ? "（你）" : ""}${member.id === room.hostId ? " · 房主" : ""}`;
+      const team = member.team == null ? "" : member.team === 0 ? " · 薄荷队" : " · 星云队";
+      name.textContent = `${member.name}${member.id === playerId ? "（你）" : ""}${member.id === room.hostId ? " · 房主" : ""}${team}`;
+      if (member.team != null) name.style.color = member.team === 0 ? "#93d9bc" : "#b5a3e8";
       status.textContent = !member.connected ? "重连中" : room.state !== "waiting" ? "本局成员" : member.ready ? "已准备" : "待准备";
       row.dataset.ready = String(member.ready); row.dataset.connected = String(member.connected !== false); row.append(name, status); return row;
     }));

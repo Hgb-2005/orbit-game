@@ -1,6 +1,6 @@
 {
   "name": "orbit-solo-arena",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "scripts": { "test": "node --test tests/*.test.js" }

@@ -18,7 +18,7 @@ let session = localSession;
 let remoteSession = null;
 const camera = new Camera();
 const renderer = new Renderer(canvas, camera);
-const input = new InputController(canvas);
+const input = new InputController(canvas, document.getElementById("touch-joystick"));
 const scores = new ScoreService(record => ui.renderRecord(record));
 const music = new BackgroundMusic(state => ui.renderMusic(state));
 const effects = new SoundEffects(() => music.context, state => ui.renderEffects(state), { supported: music.supported });

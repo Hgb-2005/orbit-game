@@ -47,10 +47,11 @@ test("发送周期内的短技能输入会保留到下一次发包", () => {
   const remote = session();
   const sent = [];
   remote.connection = "connected";
-  remote.socket = { readyState: 1, bufferedAmount: 0, send: data => sent.push(JSON.parse(data)) };
+  remote.socket = { readyState: 1, bufferedAmount: 200 * 1024, send: data => sent.push(JSON.parse(data)) };
   remote.sendTimer = 0;
   remote.step(.01, { x: 1, y: 0, split: true });
   assert.equal(sent.length, 0);
+  remote.socket.bufferedAmount = 0;
   remote.step(.04, { x: 1, y: 0, split: false });
   assert.equal(sent[0].split, true);
   remote.step(.05, { x: 1, y: 0, split: false });

@@ -15,6 +15,9 @@ from simple_websocket import ConnectionClosed
 
 from .database import save_record
 from .game.world import MultiplayerWorld
+from .game.rules import RoomRules
+from .replication import FoodFrame
+from .replication import encode
 
 LOG = logging.getLogger(__name__)
 RECONNECT_GRACE = 10.0
@@ -34,6 +37,11 @@ class Peer:
     messages: deque = field(default_factory=lambda: deque(maxlen=32))
     pending_state: object = None
     pending_foods: object = None
+    food_baseline: object = None
+    food_version: int = -1
+    food_round: str = ""
+    event_cursor: int = 0
+    event_round: str = ""
     rate_start: float = 0
     rate_count: int = 0
 
@@ -49,6 +57,8 @@ class Room:
     saved: bool = False
     broadcast_timer: float = 0
     food_version: int = -1
+    food_frame: object = None
+    rules: RoomRules = field(default_factory=RoomRules)
 
 
 class RoomManager:
@@ -114,8 +124,12 @@ class RoomManager:
                         room.saved = True
                         records.append((self.human_score(room), tuple(room.members)))
                 # 20Hz 状态广播让局域网输入更快反映到其他客户端；每个连接仍只保留最新快照。
-                if room.broadcast_timer >= 1 / 20 or room.state == "finished":
-                    room.broadcast_timer = 0
+                interval = 1 / 20
+                if room.broadcast_timer + 1e-9 >= interval or room.state == "finished":
+                    # 保留余量且容忍浮点误差：30Hz 模拟的一秒正好广播 20 次。
+                    # 卡顿后只广播最新状态，不补发已经过期的中间帧。
+                    intervals = int((room.broadcast_timer + 1e-9) / interval)
+                    room.broadcast_timer = max(0.0, room.broadcast_timer - intervals * interval)
                     self.broadcast_state(room)
         # SQLite I/O 不持有游戏锁；只保存服务器计算出的分数。
         for score, members in records:
@@ -139,10 +153,21 @@ class RoomManager:
             messages = list(peer.messages)
             peer.messages.clear()
             if peer.pending_foods is not None:
-                messages.append(peer.pending_foods)
+                frame = peer.pending_foods
+                baseline = peer.food_baseline if peer.food_round == frame.round_id else None
+                messages.append(frame.message(baseline, peer.food_version))
+                peer.food_baseline, peer.food_version, peer.food_round = frame.foods, frame.version, frame.round_id
                 peer.pending_foods = None
             if peer.pending_state is not None:
-                messages.append(peer.pending_state)
+                state = peer.pending_state
+                cursor = peer.event_cursor if peer.event_round == state["roundId"] else 0
+                events = [event for event in state["world"]["events"] if event["id"] > cursor]
+                messages.append(encode({**state, "world": {**state["world"], "events": events}}))
+                if events:
+                    peer.event_cursor = events[-1]["id"]
+                else:
+                    peer.event_cursor = cursor
+                peer.event_round = state["roundId"]
                 peer.pending_state = None
             return messages
 
@@ -192,6 +217,7 @@ class RoomManager:
             previous.rate_start, previous.rate_count = now, 0
             previous.messages.clear()
             previous.pending_state = previous.pending_foods = None
+            previous.food_baseline, previous.food_version, previous.food_round = None, -1, ""
             if room.world and previous.id in room.world.players:
                 room.world.players[previous.id]["connected"] = True
             self.peers.pop(peer_id, None)
@@ -205,9 +231,11 @@ class RoomManager:
         ai_count = len(getattr(room.world, "bot_ids", ())) if room.world else max(0, ROOM_CAPACITY - len(room.members))
         return {"type": "room", "code": room.code, "hostId": room.host, "state": room.state,
                 "roundId": room.round_id, "capacity": ROOM_CAPACITY, "aiCount": ai_count,
-                "participantCount": len(room.members) + ai_count,
-                "members": [{"id": peer.id, "name": peer.name, "ready": peer.ready, "connected": peer.connected}
-                            for pid in room.members if (peer := self.peers.get(pid))]}
+                "participantCount": len(room.members) + ai_count, "rules": room.rules.snapshot(),
+                "members": [{"id": peer.id, "name": peer.name, "ready": peer.ready, "connected": peer.connected,
+                             "team": room.world.players[pid]["team"] if room.world and pid in room.world.players
+                             else index % 2 if room.rules.mode == "teams" else None}
+                            for index, pid in enumerate(room.members) if (peer := self.peers.get(pid))]}
 
     @staticmethod
     def human_score(room):
@@ -225,18 +253,17 @@ class RoomManager:
     def broadcast_state(self, room):
         world = room.world.snapshot()
         foods = world.pop("foods")
-        # 食物全量至多随补充周期发送；每帧的 food 事件及时移除被吃小点。
-        # 食物拥有独立的最新消息槽，覆盖旧位置快照也不会丢掉一次补充。
+        # 只保留最新食物帧；drain 相对该连接已发送的基线合成补丁。
+        # 中间帧被覆盖也不会丢失食物的增加、移除或换位。
         if room.food_version != room.world.food_version:
             room.food_version = room.world.food_version
-            food_payload = json.dumps({"type": "foods", "roundId": room.round_id, "foods": foods},
-                                      ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-            for pid in room.members:
-                self.peers[pid].pending_foods = food_payload
-        payload = json.dumps({"type": "state", "roundId": room.round_id, "world": world},
-                             ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            room.food_frame = FoodFrame.capture(room.round_id, room.food_version, foods)
+        payload = {"type": "state", "roundId": room.round_id, "world": world}
         for pid in room.members:
-            self.peers[pid].pending_state = payload
+            peer = self.peers[pid]
+            if peer.food_round != room.round_id or peer.food_version != room.food_version or peer.food_baseline is None:
+                peer.pending_foods = room.food_frame
+            peer.pending_state = payload
 
     @staticmethod
     def nickname(value):
@@ -277,7 +304,7 @@ class RoomManager:
                         code = f"{secrets.randbelow(1_000_000):06d}"
                         while code in self.rooms:
                             code = f"{secrets.randbelow(1_000_000):06d}"
-                        room = Room(code, peer.id)
+                        room = Room(code, peer.id, rules=RoomRules.parse(message.get("rules")))
                         self.rooms[code] = room
                     else:
                         code = message.get("code")
@@ -294,6 +321,9 @@ class RoomManager:
                             raise ValueError("昵称重复，请换一个名字。")
                     peer.name, peer.room, peer.ready = name, room.code, False
                     room.members.append(peer.id)
+                    if room.rules.mode == "teams":
+                        for pid in room.members:
+                            self.peers[pid].ready = False
                     self.broadcast_room(room)
                     return peer_id
                 if kind == "leave":
@@ -308,22 +338,36 @@ class RoomManager:
                         raise ValueError("对局中不能更改准备状态。")
                     peer.ready = message.get("ready") is True
                     self.broadcast_room(room)
+                elif kind == "configure":
+                    if room.host != peer.id or room.state != "waiting":
+                        raise ValueError("只有房主可以在准备室调整规则。")
+                    rules = RoomRules.parse(message.get("rules"))
+                    if rules != room.rules:
+                        room.rules = rules
+                        # 改规则后重新确认，防止有人按旧规则准备后被直接开局。
+                        for pid in room.members:
+                            self.peers[pid].ready = False
+                        self.broadcast_room(room)
                 elif kind == "start":
                     if room.host != peer.id:
                         raise ValueError("只有房主可以开始对局。")
-                    if room.state != "waiting" or not room.members or not all(self.peers[pid].ready for pid in room.members):
+                    if room.state != "waiting" or not room.members or not all(self.peers[pid].ready and self.peers[pid].connected for pid in room.members):
                         raise ValueError("需要房间内真人全部准备后开始；空位会自动补人机。")
                     participants = [{"id": pid, "name": self.peers[pid].name} for pid in room.members]
                     for index in range(ROOM_CAPACITY - len(participants)):
                         participants.append({"id": f"ai-{room.code}-{index + 1}",
                                              "name": BOT_NAMES[index % len(BOT_NAMES)], "isBot": True,
                                              "role": ("forager", "rival", "hunter")[index % 3]})
-                    room.world = MultiplayerWorld(participants)
+                    room.world = MultiplayerWorld(participants, rules=room.rules)
                     room.round_id, room.state, room.saved = secrets.token_hex(8), "playing", False
                     room.broadcast_timer = 0
                     room.food_version = -1
                     self.broadcast_room(room)
                     self.broadcast_state(room)
+                elif kind == "resync_foods":
+                    if room.world and message.get("roundId") == room.round_id:
+                        peer.food_baseline = None
+                        self.broadcast_state(room)
                 elif kind == "input":
                     if room.state == "playing" and message.get("roundId") == room.round_id:
                         room.world.set_input(peer.id, message)
@@ -334,15 +378,18 @@ class RoomManager:
                     if room.host != peer.id or room.state != "finished":
                         raise ValueError("等待本局结束，由房主返回准备室。")
                     room.state, room.world = "waiting", None
+                    room.food_frame = None
                     for pid in room.members:
                         self.peers[pid].ready = False
                         self.peers[pid].pending_state = None
                         self.peers[pid].pending_foods = None
+                        self.peers[pid].food_baseline = None
                     self.broadcast_room(room)
                 else:
                     raise ValueError("不支持的房间操作。")
             except ValueError as error:
-                peer.messages.append({"type": "error", "message": str(error)})
+                peer.messages.append({"type": "error", "message": str(error),
+                                      "code": "resume_expired" if isinstance(message, dict) and message.get("type") == "resume" else "invalid_command"})
             return peer_id
 
     def leave(self, peer_id):
@@ -365,6 +412,10 @@ class RoomManager:
                 return
             if room.host == peer_id:
                 room.host = room.members[0]
+            if room.state == "waiting" and room.rules.mode == "teams":
+                # 席位变化会调整队伍，旧队伍下的准备状态不能直接沿用。
+                for pid in room.members:
+                    self.peers[pid].ready = False
             if room.world:
                 room.world.disconnect(peer_id)
                 # 保留 playing 让下一次 advance 统一处理结算和保存。

@@ -12,6 +12,7 @@ export function describeBallLabel(ball, snapshot, zoom) {
       : protectedBall ? "保护中" : "你的小球";
     return { text: `${mass} · ${detail}`, priority: 3, dangerous: false };
   }
+  if (ball.isAlly) return { text: `${mass} · 队友`, priority: 2, dangerous: false };
   const dangerous = snapshot.playerCells.some(cell => ball.mass >= cell.mass * CONFIG.rules.eatMassRatio);
   const edible = snapshot.playerCells.some(cell => cell.mass >= ball.mass * CONFIG.rules.eatMassRatio);
   const distant = snapshot.playerCells.every(cell => distanceSquared(ball, cell) > CONFIG.labels.detailDistance ** 2);

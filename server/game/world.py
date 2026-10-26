@@ -5,6 +5,7 @@ import random
 
 from .entities import BOUNDS, INITIAL_MASS, MAX_CELLS, ball, clamp, grow, keep_inside, merge, move, split
 from .spatial import SpatialGrid
+from .rules import RoomRules, TEAMS
 
 COLORS = ["#b4efcc", "#dd998d", "#b2a4dc", "#88adc9"]
 BOT_NAMES = ["人机·薄荷", "人机·追猎", "人机·小橘"]
@@ -33,7 +34,9 @@ class MultiplayerWorld:
     duration = 300
     food_count = 560
 
-    def __init__(self, members, rng=None):
+    def __init__(self, members, rng=None, rules=None):
+        self.rules = rules or RoomRules()
+        self.duration = self.rules.duration
         self.rng = rng or random.Random()
         self.elapsed = 0
         self.tick = 0
@@ -65,7 +68,9 @@ class MultiplayerWorld:
                 self.bot_ids.add(owner_id)
             else:
                 self.human_ids.add(owner_id)
-            owner = {"ownerId": owner_id, "name": member["name"], "color": COLORS[index],
+            team = index % 2 if self.rules.mode == "teams" else None
+            owner = {"ownerId": owner_id, "name": member["name"], "team": team,
+                     "color": TEAMS[team][1] if team is not None else COLORS[index],
                      "lives": 3, "kills": 0, "deaths": 0, "score": 0, "eatenBalls": 0,
                      "peakMass": 36, "protectedUntil": 3, "connected": True, "isBot": is_bot,
                      "input": neutral(), "lastInput": -1, "lastSeq": -1,
@@ -116,8 +121,8 @@ class MultiplayerWorld:
             target = {"x": clamp(target["x"], 0, BOUNDS["width"]), "y": clamp(target["y"], 0, BOUNDS["height"])}
         else:
             target = None
-        sprint, splitting, sporing = message.get("sprint") is True, message.get("split") is True, message.get("spore") is True
-        owner["queuedSprint"] |= sprint and not owner["heldSprint"]
+        # 冲刺已取消：即使旧客户端或手工请求携带 sprint，也不能触发服务端加速。
+        sprint, splitting, sporing = False, message.get("split") is True, message.get("spore") is True
         owner["queuedSplit"] |= splitting and not owner["heldSplit"]
         owner["queuedSpore"] |= sporing and not owner["heldSpore"]
         owner["heldSprint"], owner["heldSplit"], owner["heldSpore"] = sprint, splitting, sporing
@@ -219,6 +224,8 @@ class MultiplayerWorld:
             if other["ownerId"] == owner["ownerId"] or not other["alive"]:
                 continue
             other_owner = self.players[other["ownerId"]]
+            if self.allies(owner, other_owner):
+                continue
             if max(owner["protectedUntil"], other_owner["protectedUntil"]) > self.elapsed:
                 continue
             distance = (other["x"] - bot["x"]) ** 2 + (other["y"] - bot["y"]) ** 2
@@ -252,31 +259,19 @@ class MultiplayerWorld:
         return dx / length, dy / length
 
     def update_controls(self, owner, cells, dt):
-        active_time = min(dt, owner["sprintRemaining"])
-        owner["sprintRemaining"] = max(0, owner["sprintRemaining"] - dt)
-        owner["sprintCooldown"] = max(0, owner["sprintCooldown"] - (dt - active_time))
+        owner["sprintRemaining"] = owner["sprintCooldown"] = 0
         owner["splitCooldown"] = max(0, owner["splitCooldown"] - dt)
         owner["sporeCooldown"] = max(0, owner["sporeCooldown"] - dt)
         for cell in cells:
             cell["spikeCooldown"] = max(0, cell.get("spikeCooldown", 0) - dt)
         controls = owner["input"]
         direction = (controls["x"], controls["y"])
-        moving = next((cell for cell in cells if math.hypot(cell["vx"], cell["vy"]) > 5), None)
-        affordable = all(cell["mass"] - max(1, cell["mass"] * .07) >= 24 for cell in cells)
-        if (owner["queuedSprint"] and affordable and owner["sprintRemaining"] == owner["sprintCooldown"] == 0
-                and (math.hypot(*direction) > .05 or moving)):
-            for cell in cells:
-                grow(cell, -max(1, cell["mass"] * .07))
-            aim = direction if math.hypot(*direction) > .05 else (moving["vx"], moving["vy"])
+        if controls.get("target"):
+            mass = sum(cell["mass"] for cell in cells)
+            center = tuple(sum(cell[key] * cell["mass"] for cell in cells) / mass for key in ("x", "y"))
+            aim = (controls["target"]["x"] - center[0], controls["target"]["y"] - center[1])
             length = math.hypot(*aim)
-            owner["sprintDirection"] = tuple(value / length for value in aim)
-            owner["sprintRemaining"], owner["sprintCooldown"] = 1.2, 4.5
-            self.emit("sprint", owner, x=cells[0]["x"], y=cells[0]["y"], color=owner["color"])
-        if owner["sprintRemaining"] > 0:
-            length = math.hypot(*direction)
-            if length > .05:
-                owner["sprintDirection"] = tuple(value / length for value in direction)
-            direction = owner["sprintDirection"]
+            direction = tuple(value / length for value in aim) if length > .05 else (0, 0)
         if owner["queuedSplit"] and owner["splitCooldown"] == 0:
             aim = direction if math.hypot(*direction) > .05 else (
                 sum(cell["vx"] * cell["mass"] for cell in cells), sum(cell["vy"] * cell["mass"] for cell in cells))
@@ -304,48 +299,48 @@ class MultiplayerWorld:
         owner["queuedSprint"] = owner["queuedSplit"] = owner["queuedSpore"] = False
         for cell in cells:
             cell_direction = direction
-            if controls.get("target") and owner["sprintRemaining"] == 0:
+            if controls.get("target"):
                 dx, dy = controls["target"]["x"] - cell["x"], controls["target"]["y"] - cell["y"]
                 length = math.hypot(dx, dy)
                 strength = clamp((length - 5) / 75, 0, 1)
                 cell_direction = (dx / length * strength, dy / length * strength) if length else (0, 0)
-            move(cell, cell_direction, dt, 1.85 if owner["sprintRemaining"] > 0 else 1)
+            move(cell, cell_direction, dt)
 
     def consume_food(self):
         remaining = []
         cells = self.all_cells()
         self.ball_grid.build(cells)
-        self.food_grid.build(self.foods)
-        # 不能用固定查询半径：大球长大后，球心距离可能超过 180，
-        # 但其边缘已经碰到食物。空间网格只筛选候选，最终仍走精确距离判断。
-        max_radius = max((cell["radius"] for cell in cells), default=0)
+        # 球体已经按完整包围盒入网格，无需再按全场最大球的半径扩大查询。
+        # 每次增重后补入新覆盖的格子，保证同一帧长大的球不会漏吃边缘食物。
         order = {id(cell): index for index, cell in enumerate(cells)}
         for food in self.foods:
-            candidates = sorted(self.ball_grid.query_circle(food["x"], food["y"], food["radius"] + max_radius),
+            candidates = sorted(self.ball_grid.query_circle(food["x"], food["y"], food["radius"]),
                                 key=lambda cell: order[id(cell)])
             for cell in candidates:
                 if (cell["x"] - food["x"]) ** 2 + (cell["y"] - food["y"]) ** 2 <= (cell["radius"] + food["radius"]) ** 2:
                     grow(cell, 1)
+                    self.ball_grid.insert(cell)
                     self.players[cell["ownerId"]]["score"] += 1
                     self.emit("food", self.players[cell["ownerId"]], foodId=food["id"], x=food["x"], y=food["y"], color=food["color"])
                     break
             else:
                 remaining.append(food)
+        if len(remaining) != len(self.foods):
+            self.food_version += 1
         self.foods = remaining
 
     def consume_spores(self):
         cells = self.all_cells()
         self.ball_grid.build(cells)
-        self.spore_grid.build(self.spores)
         for spore in self.spores:
             if not spore["alive"]:
                 continue
-            candidates = self.ball_grid.query_circle(spore["x"], spore["y"], spore["radius"] +
-                                                     max((cell["radius"] for cell in cells), default=0))
+            candidates = self.ball_grid.query_circle(spore["x"], spore["y"], spore["radius"])
             eater = next((cell for cell in candidates if (cell["x"] - spore["x"]) ** 2 + (cell["y"] - spore["y"]) ** 2 <= (cell["radius"] + spore["radius"]) ** 2), None)
             if eater is None:
                 continue
             grow(eater, spore["mass"])
+            self.ball_grid.insert(eater)
             spore["alive"] = False
             self.emit("spore-eat", self.players[eater["ownerId"]], x=spore["x"], y=spore["y"], color=spore["color"])
         self.spores = [spore for spore in self.spores if spore["alive"]]
@@ -392,6 +387,8 @@ class MultiplayerWorld:
                         or eater["mass"] < prey["mass"] * 1.28):
                     continue
                 attacker, victim = self.players[eater["ownerId"]], self.players[prey["ownerId"]]
+                if self.allies(attacker, victim):
+                    continue
                 if max(attacker["protectedUntil"], victim["protectedUntil"]) > self.elapsed:
                     continue
                 threshold = eater["radius"] - prey["radius"] * .35
@@ -420,7 +417,17 @@ class MultiplayerWorld:
             self.cells[owner_id] = [cell for cell in self.cells[owner_id] if cell["alive"]]
         for owner in respawns:
             self.respawn(owner)
-        if sum(owner["lives"] > 0 for owner in self.players.values()) <= 1:
+        self.check_victory()
+
+    def allies(self, first, second):
+        return self.rules.mode == "teams" and first["team"] == second["team"]
+
+    def check_victory(self):
+        active = [owner for owner in self.players.values() if owner["lives"] > 0]
+        if self.rules.mode == "teams":
+            if len({owner["team"] for owner in active}) <= 1:
+                self.finish("last-team")
+        elif len(active) <= 1:
             self.finish("last-survivor")
 
     def respawn(self, owner):
@@ -446,8 +453,7 @@ class MultiplayerWorld:
             owner["lives"] = 0
             self.cells[owner_id] = []
             self.emit("departed", owner, name=owner["name"])
-            if sum(p["lives"] > 0 for p in self.players.values()) <= 1:
-                self.finish("last-survivor")
+            self.check_victory()
 
     def finish(self, reason):
         if not self.finished:
@@ -503,7 +509,7 @@ class MultiplayerWorld:
         return {"id": self.new_id("food"), **self.food_position(), "radius": 3.3, "color": self.rng.choice(FOOD_COLORS)}
 
     def standings(self):
-        ranked = sorted(({key: owner[key] for key in ("ownerId", "name", "color", "lives", "kills", "deaths", "connected", "isBot")}
+        ranked = sorted(({key: owner[key] for key in ("ownerId", "name", "color", "team", "lives", "kills", "deaths", "connected", "isBot")}
                          | {"mass": sum(c["mass"] for c in self.cells[owner_id]), "cells": len(self.cells[owner_id]), "eliminated": owner["lives"] <= 0}
                          for owner_id, owner in self.players.items()),
                         key=lambda entry: (-entry["lives"], -entry["kills"], -entry["mass"], entry["ownerId"]))
@@ -512,13 +518,28 @@ class MultiplayerWorld:
             entry["rank"] = previous["rank"] if previous and all(previous[k] == entry[k] for k in ("lives", "kills", "mass")) else index + 1
         return ranked
 
+    def team_standings(self):
+        if self.rules.mode != "teams":
+            return []
+        teams = []
+        for team_id, (name, color) in enumerate(TEAMS):
+            owners = [owner for owner in self.players.values() if owner["team"] == team_id]
+            teams.append({"id": team_id, "name": name, "color": color,
+                          "lives": sum(owner["lives"] for owner in owners),
+                          "kills": sum(owner["kills"] for owner in owners),
+                          "mass": sum(cell["mass"] for owner in owners for cell in self.cells[owner["ownerId"]]),
+                          "active": sum(owner["lives"] > 0 for owner in owners)})
+        teams.sort(key=lambda team: (-team["lives"], -team["kills"], -team["mass"], team["id"]))
+        for index, team in enumerate(teams):
+            previous = teams[index - 1] if index else None
+            team["rank"] = previous["rank"] if previous and all(previous[key] == team[key] for key in ("lives", "kills", "mass")) else index + 1
+        return teams
+
     def ability_snapshot(self, owner_id):
         owner, cells = self.players[owner_id], self.cells[owner_id]
-        active = owner["sprintRemaining"] > 0
-        affordable = bool(cells) and all(c["mass"] - max(1, c["mass"] * .07) >= 24 for c in cells)
-        sprint = {"active": active, "remaining": owner["sprintRemaining"], "cooldown": owner["sprintCooldown"],
-                  "affordable": affordable, "ready": affordable and not active and owner["sprintCooldown"] == 0,
-                  "multiplier": 1.85 if active else 1, "progress": owner["sprintRemaining"] / 1.2 if active else 1 - owner["sprintCooldown"] / 4.5}
+        # 兼容旧绘制层的字段，但已取消的技能不会再显示为可用。
+        sprint = {"active": False, "remaining": 0, "cooldown": 0, "affordable": False,
+                  "ready": False, "multiplier": 1, "progress": 0}
         affordable_split = any(c["mass"] >= 72 for c in cells)
         remaining = max((c["mergeRemaining"] for c in cells), default=0) if len(cells) > 1 else 0
         splitting = {"count": len(cells), "maxCells": MAX_CELLS, "affordable": affordable_split, "cooldown": owner["splitCooldown"],
@@ -535,11 +556,18 @@ class MultiplayerWorld:
         players = []
         for owner_id, owner in self.players.items():
             sprint, splitting, spore = self.ability_snapshot(owner_id)
-            players.append({**{key: owner[key] for key in ("ownerId", "name", "color", "score", "eatenBalls", "peakMass", "killer", "isBot")},
+            players.append({**{key: owner[key] for key in ("ownerId", "name", "color", "team", "score", "eatenBalls", "peakMass", "killer", "isBot")},
                             "sprint": sprint, "split": splitting, "spore": spore, "ack": owner["lastSeq"]})
         standings = self.standings()
+        # 物理状态留在服务端。快照只包含绘制需要的字段，并拍成独立副本供发送线程读取。
+        cells = [{key: cell[key] for key in ("id", "ownerId", "team", "name", "color", "alive")}
+                 | {key: round(cell[key], 3) for key in ("x", "y", "mass", "radius", "speed", "mergeRemaining")}
+                 | {"vx": round(cell["vx"] + cell["impulseX"], 3), "vy": round(cell["vy"] + cell["impulseY"], 3)}
+                 for cell in self.all_cells()]
         return {"tick": self.tick, "elapsed": self.elapsed, "duration": self.duration, "bounds": BOUNDS,
-                "cells": self.all_cells(), "foods": self.foods, "spores": self.spores, "spikes": self.spikes, "hotspots": self.hotspots, "players": players,
+                "rules": self.rules.snapshot(), "teams": self.team_standings(),
+                "cells": cells, "foods": self.foods, "spores": [dict(spore) for spore in self.spores],
+                "spikes": self.spikes, "hotspots": dict(self.hotspots), "players": players,
                 "standings": standings, "finished": self.finished, "reason": self.reason,
                 "protectionByOwner": {key: max(0, p["protectedUntil"] - self.elapsed) for key, p in self.players.items()},
-                "events": self.events}
+                "events": list(self.events)}
