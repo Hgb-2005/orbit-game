@@ -13,7 +13,9 @@ from flask import request
 from flask_sock import Sock
 from simple_websocket import ConnectionClosed
 
-from .database import save_record
+from .database import save_record, save_custom_record
+from .database import save_match_history
+from .history import network_history
 from .game.world import MultiplayerWorld
 from .game.rules import RoomRules
 from .replication import FoodFrame
@@ -32,6 +34,7 @@ class Peer:
     name: str = ""
     room: str = ""
     ready: bool = False
+    team: object = None  # 准备室选择属于玩家身份，断线恢复和再来一局都会保留。
     connected: bool = True
     reconnect_deadline: float = 0
     messages: deque = field(default_factory=lambda: deque(maxlen=32))
@@ -59,18 +62,23 @@ class Room:
     food_version: int = -1
     food_frame: object = None
     rules: RoomRules = field(default_factory=RoomRules)
+    custom_record: object = None
+    history_queued: bool = False
 
 
 class RoomManager:
     """所有房间操作共用短锁；网络慢客户端只覆盖旧快照，不会拖住其他玩家。"""
 
-    def __init__(self, save_score=None, clock=time.monotonic):
+    def __init__(self, save_score=None, clock=time.monotonic, save_custom_score=None, save_history=None):
         self.clock = clock
         self.save_score = save_score or (lambda score: None)
+        self.save_custom_score = save_custom_score or (lambda score, rules: {"high_score": score})
         self.lock = threading.RLock()
         self.peers = {}
         self.rooms = {}
         self.pending_records = []
+        self.pending_history = []
+        self.save_history = save_history or (lambda match: None)
         self.stop_event = threading.Event()
         self.thread = None
 
@@ -112,17 +120,19 @@ class RoomManager:
         with self.lock:
             self.reap_disconnected()
             records, self.pending_records = self.pending_records, []
+            histories, self.pending_history = self.pending_history, []
             for room in list(self.rooms.values()):
                 if room.state != "playing":
                     continue
                 room.world.update(dt)
                 room.broadcast_timer += dt
                 if room.world.finished:
+                    self.queue_history(room)
                     room.state = "finished"
                     self.broadcast_room(room)
                     if not room.saved:
                         room.saved = True
-                        records.append((self.human_score(room), tuple(room.members)))
+                        records.append((self.human_score(room), tuple(room.members), room.rules, room.round_id))
                 # 20Hz 状态广播让局域网输入更快反映到其他客户端；每个连接仍只保留最新快照。
                 interval = 1 / 20
                 if room.broadcast_timer + 1e-9 >= interval or room.state == "finished":
@@ -131,19 +141,43 @@ class RoomManager:
                     intervals = int((room.broadcast_timer + 1e-9) / interval)
                     room.broadcast_timer = max(0.0, room.broadcast_timer - intervals * interval)
                     self.broadcast_state(room)
+            histories.extend(self.pending_history)
+            self.pending_history = []
         # SQLite I/O 不持有游戏锁；只保存服务器计算出的分数。
-        for score, members in records:
+        for score, members, rules, round_id in records:
             try:
-                self.save_score(score)
+                record = self.save_score(score) if rules.ranked else self.save_custom_score(score, rules.record_key)
                 # 保存完成后再通知浏览器读取记录，避免结算快照先到而读到旧纪录。
                 with self.lock:
+                    for room in self.rooms.values():
+                        if room.round_id == round_id and not rules.ranked:
+                            room.custom_record = record
+                            self.broadcast_room(room)
                     for pid in members:
                         if pid in self.peers:
-                            self.peers[pid].messages.append({"type": "record_saved"})
+                            self.peers[pid].messages.append({"type": "record_saved"} if rules.ranked else
+                                                           {"type": "record_saved", "scope": "custom", "record": record, "roundId": round_id})
             except Exception:
                 LOG.exception("Could not persist multiplayer score")
                 with self.lock:
-                    self.pending_records.append((score, members))
+                    self.pending_records.append((score, members, rules, round_id))
+        # 归档与最高分独立重试；SQLite 写入不占用模拟锁。
+        for match, members in histories:
+            try:
+                self.save_history(match)
+                with self.lock:
+                    for pid in members:
+                        if pid in self.peers:
+                            self.peers[pid].messages.append({'type': 'history_saved', 'id': match['id']})
+            except Exception:
+                LOG.exception('Could not persist match history')
+                with self.lock:
+                    self.pending_history.append((match, members))
+
+    def queue_history(self, room, abandoned=False):
+        if room.world and not room.history_queued:
+            room.history_queued = True
+            self.pending_history.append((network_history(room, abandoned), tuple(room.world.human_ids)))
 
     def drain(self, peer_id):
         with self.lock:
@@ -162,7 +196,15 @@ class RoomManager:
                 state = peer.pending_state
                 cursor = peer.event_cursor if peer.event_round == state["roundId"] else 0
                 events = [event for event in state["world"]["events"] if event["id"] > cursor]
-                messages.append(encode({**state, "world": {**state["world"], "events": events}}))
+                viewer = next((owner for owner in state['world']['players'] if owner['ownerId'] == peer_id), None)
+                # 在序列化之前过滤，敌方浏览器连原始坐标也不会收到。
+                pings = [item for item in state['world'].get('pings', [])
+                         if viewer and viewer.get('team') is not None and item['team'] == viewer['team']]
+                # 预测分量只给本人，对手继续使用合成速度插值，避免八分身时扩大所有人的包。
+                cells = [cell if cell['ownerId'] == peer_id else
+                         {key: value for key, value in cell.items() if key != 'motion'}
+                         for cell in state['world']['cells']]
+                messages.append(encode({**state, "world": {**state["world"], "events": events, 'pings': pings, 'cells': cells}}))
                 if events:
                     peer.event_cursor = events[-1]["id"]
                 else:
@@ -228,14 +270,15 @@ class RoomManager:
             return previous.id
 
     def room_snapshot(self, room):
-        ai_count = len(getattr(room.world, "bot_ids", ())) if room.world else max(0, ROOM_CAPACITY - len(room.members))
+        ai_count = len(getattr(room.world, "bot_ids", ())) if room.world else room.rules.ai_count(len(room.members))
         return {"type": "room", "code": room.code, "hostId": room.host, "state": room.state,
                 "roundId": room.round_id, "capacity": ROOM_CAPACITY, "aiCount": ai_count,
-                "participantCount": len(room.members) + ai_count, "rules": room.rules.snapshot(),
+                "participantCount": len(room.members) + ai_count, "rules": room.rules.snapshot(), "ranked": room.rules.ranked,
+                "customRecord": room.custom_record,
                 "members": [{"id": peer.id, "name": peer.name, "ready": peer.ready, "connected": peer.connected,
                              "team": room.world.players[pid]["team"] if room.world and pid in room.world.players
-                             else index % 2 if room.rules.mode == "teams" else None}
-                            for index, pid in enumerate(room.members) if (peer := self.peers.get(pid))]}
+                             else peer.team if room.rules.mode == "teams" else None}
+                            for pid in room.members if (peer := self.peers.get(pid))]}
 
     @staticmethod
     def human_score(room):
@@ -249,6 +292,22 @@ class RoomManager:
         payload = self.room_snapshot(room)
         for pid in room.members:
             self.peers[pid].messages.append(payload)
+
+    def assign_teams(self, room):
+        """只分配尚未选队的成员；进出房间不改变其他人的已有选择。"""
+        counts = [0, 0]
+        for pid in room.members:
+            peer = self.peers[pid]
+            if room.rules.mode != 'teams':
+                peer.team = None
+            elif peer.team in (0, 1):
+                counts[peer.team] += 1
+        if room.rules.mode == 'teams':
+            for pid in room.members:
+                peer = self.peers[pid]
+                if peer.team is None:
+                    peer.team = 0 if counts[0] <= counts[1] else 1
+                    counts[peer.team] += 1
 
     def broadcast_state(self, room):
         world = room.world.snapshot()
@@ -321,6 +380,7 @@ class RoomManager:
                             raise ValueError("昵称重复，请换一个名字。")
                     peer.name, peer.room, peer.ready = name, room.code, False
                     room.members.append(peer.id)
+                    self.assign_teams(room)
                     if room.rules.mode == "teams":
                         for pid in room.members:
                             self.peers[pid].ready = False
@@ -338,12 +398,28 @@ class RoomManager:
                         raise ValueError("对局中不能更改准备状态。")
                     peer.ready = message.get("ready") is True
                     self.broadcast_room(room)
+                elif kind == 'choose_team':
+                    if room.state != 'waiting' or room.rules.mode != 'teams':
+                        raise ValueError('只能在 2v2 团队准备室选择队伍。')
+                    team = message.get('team')
+                    if type(team) is not int or team not in (0, 1):
+                        raise ValueError('请选择薄荷队或星云队。')
+                    if peer.team == team:
+                        self.broadcast_room(room)
+                    elif sum(self.peers[pid].team == team for pid in room.members) >= 2:
+                        raise ValueError('这支队伍已满，每队最多两位真人；空出席位后才能加入。')
+                    else:
+                        peer.team = team
+                        for pid in room.members:
+                            self.peers[pid].ready = False
+                        self.broadcast_room(room)
                 elif kind == "configure":
                     if room.host != peer.id or room.state != "waiting":
                         raise ValueError("只有房主可以在准备室调整规则。")
                     rules = RoomRules.parse(message.get("rules"))
                     if rules != room.rules:
                         room.rules = rules
+                        self.assign_teams(room)
                         # 改规则后重新确认，防止有人按旧规则准备后被直接开局。
                         for pid in room.members:
                             self.peers[pid].ready = False
@@ -353,13 +429,23 @@ class RoomManager:
                         raise ValueError("只有房主可以开始对局。")
                     if room.state != "waiting" or not room.members or not all(self.peers[pid].ready and self.peers[pid].connected for pid in room.members):
                         raise ValueError("需要房间内真人全部准备后开始；空位会自动补人机。")
-                    participants = [{"id": pid, "name": self.peers[pid].name} for pid in room.members]
-                    for index in range(ROOM_CAPACITY - len(participants)):
+                    participants = [{"id": pid, "name": self.peers[pid].name,
+                                     **({'team': self.peers[pid].team} if room.rules.mode == 'teams' else {})}
+                                    for pid in room.members]
+                    ai_count = room.rules.ai_count(len(participants))
+                    if len(participants) + ai_count < 2:
+                        raise ValueError("至少需要两位参赛者，请邀请朋友或增加人机。")
+                    for index in range(ai_count):
+                        counts = [sum(p.get('team') == team for p in participants) for team in (0, 1)]
+                        team = 0 if counts[0] <= counts[1] else 1
                         participants.append({"id": f"ai-{room.code}-{index + 1}",
                                              "name": BOT_NAMES[index % len(BOT_NAMES)], "isBot": True,
+                                             **({'team': team} if room.rules.mode == 'teams' else {}),
                                              "role": ("forager", "rival", "hunter")[index % 3]})
                     room.world = MultiplayerWorld(participants, rules=room.rules)
                     room.round_id, room.state, room.saved = secrets.token_hex(8), "playing", False
+                    room.custom_record = None
+                    room.history_queued = False
                     room.broadcast_timer = 0
                     room.food_version = -1
                     self.broadcast_room(room)
@@ -371,6 +457,11 @@ class RoomManager:
                 elif kind == "input":
                     if room.state == "playing" and message.get("roundId") == room.round_id:
                         room.world.set_input(peer.id, message)
+                elif kind == 'team_ping':
+                    if room.state != 'playing' or message.get('roundId') != room.round_id:
+                        raise ValueError('标点已过期，请在当前对局重新发送。')
+                    room.world.signals.send(room.world, peer.id, message)
+                    self.broadcast_state(room)
                 elif kind == "stop":
                     if room.state == "playing":
                         room.world.stop_input(room.world.players[peer.id])
@@ -378,6 +469,7 @@ class RoomManager:
                     if room.host != peer.id or room.state != "finished":
                         raise ValueError("等待本局结束，由房主返回准备室。")
                     room.state, room.world = "waiting", None
+                    room.custom_record = None
                     room.food_frame = None
                     for pid in room.members:
                         self.peers[pid].ready = False
@@ -399,21 +491,27 @@ class RoomManager:
                 return
             room = self.rooms.get(peer.room)
             peer.room, peer.ready, peer.pending_state, peer.pending_foods = "", False, None, None
+            peer.team = None
             if not room:
                 return
             if peer_id in room.members:
                 room.members.remove(peer_id)
             if not room.members:
+                if room.world and not room.world.finished:
+                    room.world.disconnect(peer_id)
+                    self.queue_history(room, abandoned=True)
+                else:
+                    self.queue_history(room)
                 # 同一帧全员退出时房间也会被清理，已计算的分数仍交给模拟线程保存。
                 if room.world and not room.saved:
                     room.saved = True
-                    self.pending_records.append((self.human_score(room), ()))
+                    self.pending_records.append((self.human_score(room), (), room.rules, room.round_id))
                 del self.rooms[room.code]
                 return
             if room.host == peer_id:
                 room.host = room.members[0]
             if room.state == "waiting" and room.rules.mode == "teams":
-                # 席位变化会调整队伍，旧队伍下的准备状态不能直接沿用。
+                # 人员变化需要重新准备；保留剩余成员自己选定的队伍。
                 for pid in room.members:
                     self.peers[pid].ready = False
             if room.world:
@@ -432,7 +530,13 @@ def init_multiplayer(app):
     def persist(score):
         with app.app_context():
             return save_record(score)
-    manager = RoomManager(persist)
+    def persist_custom(score, rules_key):
+        with app.app_context():
+            return save_custom_record(score, rules_key)
+    def persist_history(match):
+        with app.app_context():
+            return save_match_history(match)
+    manager = RoomManager(persist, save_custom_score=persist_custom, save_history=persist_history)
     app.extensions["orbit_rooms"] = manager
     app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 15, "max_message_size": 4096}
     sock = Sock(app)

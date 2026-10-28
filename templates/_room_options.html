@@ -1,0 +1,18 @@
+{# 创建与准备室复用同一组选项，字段名与服务器 RoomRules 对齐。 #}
+<label class="room-preset">玩法预设
+  <select id="{{ rules_prefix }}-preset">
+    <option value="standard">标准成长 · 小球起步</option>
+    <option value="casual">休闲成长 · 食物丰富</option>
+    <option value="quick">快速乱斗 · 大球开局</option>
+    <option value="custom" disabled>自定义设置</option>
+  </select>
+</label>
+<details class="room-advanced">
+  <summary>调整人机与成长规则</summary>
+  <div class="room-rules">
+    <label>人机数量<select id="{{ rules_prefix }}-bot-count"><option value="-1">自动补满四席</option><option value="0">0 名</option><option value="1">最多 1 名</option><option value="2">最多 2 名</option><option value="3">最多 3 名</option></select></label>
+    <label>人机难度<select id="{{ rules_prefix }}-bot-difficulty"><option value="casual">休闲 · 温和追逐</option><option value="standard" selected>标准 · 谨慎分裂</option><option value="challenge">挑战 · 积极追击</option></select></label>
+    <label>食物密度<select id="{{ rules_prefix }}-food-density"><option value="sparse">稀疏 · 360 点</option><option value="normal" selected>标准 · 560 点</option><option value="rich">密集 · 800 点</option></select></label>
+    <label>开局质量<select id="{{ rules_prefix }}-initial-mass"><option value="36">36 m · 小球起步</option><option value="72">72 m · 即可分裂</option><option value="144">144 m · 大球乱斗</option></select></label>
+  </div>
+</details>

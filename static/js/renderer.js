@@ -1,5 +1,8 @@
 import { CONFIG } from "./config.js";
 import { describeBallLabel, layoutBallLabels } from "./presentation/labels.js";
+import { CombatFeedback, nearestDanger } from "./presentation/combat-feedback.js";
+import { RenderQuality } from "./presentation/quality.js";
+import { splitProjection, FrameMetrics, SIGNAL_COLORS, SIGNAL_NAMES } from './presentation/tactics.js';
 
 const THEMES = {
   dark: { background: "#101a17", grid: "#26342b", border: "#586f5e", text: "#d6e0d9", muted: "#718979", player: "#b4efcc", playerInk: "#203d2a", mini: "#15211ce8", miniBorder: "#334539" },
@@ -16,10 +19,18 @@ export class Renderer {
     this.width = 1;
     this.height = 1;
     this.particles = [];
+    this.combat = new CombatFeedback();
     this.trails = [];
     this.trailTimer = 0;
     this.labelObstacles = [];
     this.labelPlacements = [];
+    let storage = null;
+    try { storage = window.localStorage; } catch { /* 无存储权限仍可调画质。 */ }
+    this.quality = new RenderQuality(storage);
+    this.metrics = new FrameMetrics();
+    this.frameMs = 16.67;
+    this.previewEnabled = false;
+    this.aim = null;
     this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.touchQuery = window.matchMedia("(pointer: coarse), (max-width: 760px)");
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -32,18 +43,20 @@ export class Renderer {
     this.touchMode = this.touchQuery.matches;
     this.width = rect.width;
     this.height = rect.height;
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.dpr = Math.min(window.devicePixelRatio || 1, this.quality.preset.dpr);
     this.canvas.width = Math.round(this.width * this.dpr);
     this.canvas.height = Math.round(this.height * this.dpr);
   }
 
   addEvents(events) {
+    this.combat.add(events);
     for (const event of events) {
       if (!["food", "eat", "sprint", "split", "merge", "celllost", "respawn", "spore", "spore-eat", "spike"].includes(event.type)) continue;
       if (event.type === "respawn" && !event.isPlayer) continue;
-      const count = event.type === "food" ? 4 : 15;
+      const { particles, perEvent } = this.quality.preset;
+      const count = this.reducedMotion ? 0 : event.type === "food" ? Math.min(4, perEvent) : perEvent;
       for (let i = 0; i < count; i++) {
-        if (this.particles.length > 180) this.particles.shift();
+        if (this.particles.length >= particles) this.particles.shift();
         const angle = Math.random() * Math.PI * 2;
         const speed = 15 + Math.random() * 55;
         this.particles.push({ x: event.x, y: event.y, vx: Math.cos(angle) * speed,
@@ -53,12 +66,26 @@ export class Renderer {
   }
 
   resetEffects() {
+    this.combat.reset();
     this.particles = [];
     this.trails = [];
     this.trailTimer = 0;
   }
 
+  setQuality(mode) {
+    if (!this.quality.setMode(mode)) return;
+    this.applyQuality();
+  }
+
+  applyQuality() {
+    this.particles = this.particles.slice(-this.quality.preset.particles);
+    this.combat.rings = this.combat.rings.slice(-this.quality.preset.rings);
+    this.resize();
+  }
+
   draw(snapshot, dt, feedback) {
+    const drawStarted = performance.now();
+    this.combat.update(dt, snapshot.state === "playing");
     const { ctx, camera } = this;
     const colors = THEMES[this.theme];
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -92,6 +119,9 @@ export class Renderer {
     }
     ctx.globalAlpha = 1;
 
+    this.drawSafeZone(snapshot);
+    if (this.previewEnabled) this.drawSplitPreview(snapshot, colors);
+
     if (snapshot.state === "playing") {
       this.trailTimer += dt;
       for (const trail of this.trails) trail.life -= dt;
@@ -112,10 +142,27 @@ export class Renderer {
     }
     ctx.globalAlpha = 1;
 
+    if (snapshot.regrouping && snapshot.playerCells.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = colors.player;
+      ctx.globalAlpha = .25;
+      ctx.lineWidth = 1.25 / this.camera.zoom;
+      ctx.setLineDash([5 / this.camera.zoom, 7 / this.camera.zoom]);
+      ctx.beginPath();
+      for (const cell of snapshot.playerCells) {
+        ctx.moveTo(cell.x, cell.y); ctx.lineTo(snapshot.player.x, snapshot.player.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(snapshot.player.x, snapshot.player.y, 10 / this.camera.zoom, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
     const balls = [...snapshot.bots, ...snapshot.playerCells].filter(ball => ball.alive).sort((a, b) => a.mass - b.mass);
     for (const ball of balls) {
       if (this.visible(ball)) this.drawBall(ball, snapshot, colors);
     }
+    this.drawCombatRings(snapshot);
+    this.drawSignals(snapshot);
 
     for (const particle of this.particles) {
       if (snapshot.state === "playing") {
@@ -132,7 +179,64 @@ export class Renderer {
     ctx.restore();
     if (snapshot.state === "playing") this.drawDirection(snapshot, colors);
     this.drawBallLabels(balls.filter(ball => this.visible(ball)), snapshot, colors);
+    this.drawCombatText(colors);
     this.drawMiniMap(snapshot, colors, feedback);
+    const drawCost = performance.now() - drawStarted;
+    this.metrics.observe(this.frameMs, drawCost, snapshot.state === 'playing');
+    if (this.quality.observe(drawCost, dt, snapshot.state === "playing")) this.applyQuality();
+  }
+
+  drawSafeZone(snapshot) {
+    const zone = snapshot.safeZone;
+    if (!zone) return;
+    const { ctx } = this;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, snapshot.bounds.width, snapshot.bounds.height); ctx.clip();
+    ctx.fillStyle = this.theme === 'dark' ? '#a171ce24' : '#7042a329';
+    ctx.beginPath(); ctx.rect(0, 0, snapshot.bounds.width, snapshot.bounds.height);
+    ctx.moveTo(zone.x + zone.radius, zone.y); ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+    ctx.fill('evenodd');
+    ctx.strokeStyle = this.theme === 'dark' ? '#b99add' : '#8151aa';
+    ctx.lineWidth = 2.5 / this.camera.zoom;
+    ctx.beginPath(); ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2); ctx.stroke();
+    if (['warning', 'shrinking'].includes(zone.phase)) {
+      ctx.strokeStyle = this.theme === 'dark' ? '#e0bd80' : '#9a7329';
+      ctx.setLineDash([10 / this.camera.zoom, 7 / this.camera.zoom]);
+      ctx.beginPath(); ctx.arc(zone.x, zone.y, zone.nextRadius, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawSplitPreview(snapshot, colors) {
+    const ghosts = splitProjection(snapshot, this.aim);
+    if (!ghosts.length) return;
+    const { ctx } = this;
+    ctx.save(); ctx.strokeStyle = this.theme === 'light' ? '#32774e' : colors.player; ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = 1.25 / this.camera.zoom; ctx.globalAlpha = .62;
+    ctx.setLineDash([5 / this.camera.zoom, 5 / this.camera.zoom]);
+    ctx.font = `${10 / this.camera.zoom}px sans-serif`; ctx.textAlign = 'center';
+    for (const ghost of ghosts) {
+      ctx.beginPath(); ctx.moveTo(ghost.from.x, ghost.from.y); ctx.lineTo(ghost.x, ghost.y); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ghost.x, ghost.y, ghost.radius, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillText(`½ ${Math.round(ghost.mass)} m`, ghost.x, ghost.y + 4 / this.camera.zoom);
+    }
+    ctx.restore();
+  }
+
+  drawSignals(snapshot) {
+    const { ctx } = this;
+    ctx.save(); ctx.textAlign = 'center'; ctx.lineWidth = 2 / this.camera.zoom;
+    ctx.font = `${11 / this.camera.zoom}px sans-serif`;
+    for (const ping of snapshot.pings || []) {
+      ctx.globalAlpha = Math.min(1, Math.max(0, ping.expiresAt - snapshot.elapsed));
+      ctx.strokeStyle = ctx.fillStyle = SIGNAL_COLORS[ping.kind];
+      const radius = 12 / this.camera.zoom;
+      ctx.beginPath(); ctx.arc(ping.x, ping.y, radius, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ping.x - radius * .5, ping.y); ctx.lineTo(ping.x + radius * .5, ping.y);
+      ctx.moveTo(ping.x, ping.y - radius * .5); ctx.lineTo(ping.x, ping.y + radius * .5); ctx.stroke();
+      ctx.fillText(`${ping.name} · ${SIGNAL_NAMES[ping.kind]}`, ping.x, ping.y - 20 / this.camera.zoom);
+    }
+    ctx.restore();
   }
 
   visible(entity) {
@@ -194,8 +298,62 @@ export class Renderer {
       ctx.arc(0, 0, radius * 0.48, 0, Math.PI * 2);
       ctx.fillStyle = colors.background;
       ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = this.theme === "dark" ? "#153d25" : "#123b20";
+      ctx.font = `600 ${12 / camera.zoom}px 'Microsoft YaHei', sans-serif`;
+      ctx.fillText(spike.projectile ? "反击刺" : `${spike.charge || 0}/${CONFIG.spikes.feedCount}`, 0, 0);
+      if (!spike.projectile && spike.charge) {
+        ctx.strokeStyle = "#f6db91";
+        ctx.lineWidth = 3 / camera.zoom;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 6 / camera.zoom, -Math.PI / 2,
+          -Math.PI / 2 + Math.PI * 2 * spike.charge / CONFIG.spikes.feedCount);
+        ctx.stroke();
+      }
       ctx.restore();
     }
+  }
+
+  drawCombatRings(snapshot) {
+    const { ctx, camera } = this;
+    ctx.save();
+    ctx.lineWidth = 2 / camera.zoom;
+    for (const ring of this.combat.rings.slice(-this.quality.preset.rings)) {
+      ctx.globalAlpha = Math.max(0, ring.life / ring.duration) * .7;
+      ctx.strokeStyle = ring.bad ? "#eb9a91" : ring.color || "#b4efcc";
+      ctx.beginPath();
+      ctx.arc(ring.x, ring.y, (this.reducedMotion ? 20 : 12 + (1 - ring.life / ring.duration) * 42) / camera.zoom, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    const danger = nearestDanger(snapshot);
+    if (danger) {
+      const { cell, enemy } = danger;
+      const angle = Math.atan2(enemy.y - cell.y, enemy.x - cell.x);
+      ctx.globalAlpha = .8; ctx.strokeStyle = "#e79b8e"; ctx.lineWidth = 3 / camera.zoom;
+      ctx.beginPath();
+      ctx.arc(cell.x, cell.y, cell.radius + 9 / camera.zoom, angle - .65, angle + .65);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawCombatText(colors) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (const item of this.combat.floats) {
+      const point = this.camera.worldToScreen(item);
+      ctx.globalAlpha = Math.min(1, Math.max(0, item.life / item.duration) * 2);
+      ctx.font = `${item.small ? 500 : 700} ${item.small ? 12 : 17}px 'Microsoft YaHei', sans-serif`;
+      const y = point.y - 18 - (this.reducedMotion ? 0 : (1 - item.life / item.duration) * 30);
+      ctx.strokeStyle = colors.background; ctx.lineWidth = 4;
+      ctx.strokeText(item.text, point.x, y);
+      ctx.fillStyle = item.bad ? (this.theme === "dark" ? "#f0a69b" : "#a94138") : colors.player;
+      ctx.fillText(item.text, point.x, y);
+    }
+    ctx.restore();
   }
 
   drawGrid(bounds, colors) {
@@ -208,11 +366,11 @@ export class Renderer {
     ctx.lineWidth = 0.6 / camera.zoom;
     ctx.globalAlpha = 0.52;
     ctx.beginPath();
-    for (let x = Math.floor(left / 50) * 50; x < right; x += 50) {
+    for (let x = Math.floor(left / 50) * 50; this.quality.preset.grid && x < right; x += 50) {
       ctx.moveTo(x, top);
       ctx.lineTo(x, bottom);
     }
-    for (let y = Math.floor(top / 50) * 50; y < bottom; y += 50) {
+    for (let y = Math.floor(top / 50) * 50; this.quality.preset.grid && y < bottom; y += 50) {
       ctx.moveTo(left, y);
       ctx.lineTo(right, y);
     }
@@ -341,7 +499,7 @@ export class Renderer {
     const width = this.width < 500 ? 96 : 119;
     const height = width * snapshot.bounds.height / snapshot.bounds.width;
     const x = this.width - width - 16;
-    const y = this.height - height - (this.touchMode && snapshot.state === "playing" && !snapshot.spectating ? 175 : 18);
+    const y = this.height - height - (this.touchMode && snapshot.state === "playing" && !snapshot.spectating ? 225 : 18);
     const sx = width / snapshot.bounds.width;
     const sy = height / snapshot.bounds.height;
     return { x, y, width, height, sx, sy };
@@ -403,6 +561,7 @@ export class Renderer {
       ctx.fillText(zone.label, zx, zy);
     }
     ctx.restore();
+    this.drawMiniTactics(snapshot, { x, y, width, height, sx, sy });
     for (const bot of snapshot.bots) {
       ctx.fillStyle = bot.color;
       ctx.globalAlpha = 0.7;
@@ -428,6 +587,27 @@ export class Renderer {
 
   drawDirection(snapshot, colors) {
     for (const player of snapshot.playerCells) this.drawCellDirection(player, colors);
+  }
+
+  drawMiniTactics(snapshot, map) {
+    const { ctx } = this, { x, y, width, height, sx, sy } = map;
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, width, height); ctx.clip();
+    if (snapshot.safeZone) {
+      const zone = snapshot.safeZone;
+      ctx.strokeStyle = this.theme === 'dark' ? '#c5a5eb' : '#8151aa'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x + zone.x * sx, y + zone.y * sy, zone.radius * sx, 0, Math.PI * 2); ctx.stroke();
+      if (['warning', 'shrinking'].includes(zone.phase)) {
+        ctx.strokeStyle = '#cda45b'; ctx.setLineDash([3, 2]);
+        ctx.beginPath(); ctx.arc(x + zone.x * sx, y + zone.y * sy, zone.nextRadius * sx, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+    for (const ping of snapshot.pings || []) {
+      ctx.fillStyle = SIGNAL_COLORS[ping.kind];
+      const px = x + ping.x * sx, py = y + ping.y * sy;
+      ctx.beginPath(); ctx.moveTo(px, py - 4); ctx.lineTo(px + 4, py); ctx.lineTo(px, py + 4); ctx.lineTo(px - 4, py); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
   }
 
   drawCellDirection(player, colors) {

@@ -1,6 +1,9 @@
 import { World } from "./core/world.js";
 import { getLeaderboard } from "./core/leaderboard.js";
 
+/** 练习成绩从所有保存入口排除；联机成绩仅由服务器保存。 */
+export const isRankedRound = snapshot => !snapshot.network && snapshot.mode !== "practice";
+
 /**
  * 会话是 UI 与规则引擎之间的边界。
  * 多人版可新增 RemoteSession，保留 start / pause / step / getSnapshot 接口，
@@ -10,10 +13,12 @@ export class LocalSession {
   constructor() {
     this.world = new World();
     this.state = "ready";
+    this.roundId = '';
   }
 
-  start(viewSize, mode = "classic") {
-    this.world.reset(viewSize, mode);
+  start(viewSize, mode = "classic", drill = "split") {
+    this.roundId = `local-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    this.world.reset(viewSize, mode, drill);
     this.state = "playing";
   }
 
@@ -43,6 +48,7 @@ export class LocalSession {
     const survival = world.survival?.getSnapshot(cells, world.elapsed) ?? null;
     return {
       mode: world.mode, survival, result: world.result,
+      stats: world.stats.snapshot(this.state === 'gameover'), practice: world.practice?.snapshot() ?? null, regrouping: world.regrouping,
       state: this.state, bounds: world.bounds, player: world.playerGroup,
       playerCells: world.playerCells,
        bots: world.bots, foods: world.foods, spores: world.spores, spikes: world.spikes, score: world.score,

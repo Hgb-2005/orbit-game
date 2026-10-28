@@ -2,7 +2,7 @@ import { CONFIG } from "./config.js";
 import { Camera } from "./camera.js";
 import { InputController } from "./input.js";
 import { Renderer } from "./renderer.js";
-import { LocalSession } from "./session.js";
+import { isRankedRound, LocalSession } from "./session.js";
 import { ScoreService } from "./services/scores.js";
 import { GameUI } from "./ui.js";
 import { BackgroundMusic } from "./audio/music.js";
@@ -10,6 +10,9 @@ import { SoundEffects } from "./audio/effects.js";
 import { VisualFeedback } from "./presentation/feedback.js";
 import { RemoteSession } from "./network/remote-session.js";
 import { LobbyUI } from "./network/lobby-ui.js";
+import { TacticsUI } from './presentation/tactics-ui.js';
+import { HistoryService } from './services/history.js';
+import { HistoryUI } from './presentation/history-ui.js';
 
 const canvas = document.getElementById("game-canvas");
 const ui = new GameUI();
@@ -24,6 +27,18 @@ const music = new BackgroundMusic(state => ui.renderMusic(state));
 const effects = new SoundEffects(() => music.context, state => ui.renderEffects(state), { supported: music.supported });
 const feedback = new VisualFeedback();
 const lobby = new LobbyUI(() => remoteSession);
+const tactics = new TacticsUI({ getSession: () => session, canvas, camera, renderer, toast: message => ui.toast(message) });
+const history = new HistoryService(() => historyUI.render());
+const historyUI = new HistoryUI(history, {
+  onOpen: () => {
+    input.reset();
+    if (session instanceof RemoteSession) session.stop();
+    else if (session.state === 'playing') togglePause();
+  },
+  onClose: () => { input.reset(); remoteSession?.resumeInput(); canvas.focus({ preventScroll: true }); },
+});
+input.onSkillAttempt = kind => tactics.skillAttempt(kind);
+input.onArenaPointer = event => tactics.pointer(event);
 renderer.theme = ui.theme;
 ui.renderMusic(music.getSnapshot());
 ui.renderEffects(effects.getSnapshot());
@@ -41,6 +56,7 @@ let recordAtStart = 0;
 function syncScore() {
   if (session instanceof RemoteSession) return;
   const snapshot = session.getSnapshot();
+  if (!isRankedRound(snapshot)) return;
   scores.observe(snapshot.score);
   void scores.flush();
 }
@@ -48,6 +64,7 @@ function syncScore() {
 function renderHud(snapshot = session.getSnapshot()) {
   ui.render(snapshot, feedback.update(snapshot));
   lobby.render(snapshot);
+  tactics.render(snapshot);
   renderer.labelObstacles = ui.getLabelObstacles(canvas.getBoundingClientRect());
 }
 
@@ -61,14 +78,14 @@ function start(forceNewGame = false) {
     recordAtStart = scores.highScore;
     ui.focusOnStart();
     renderer.resize();
-    session.start({ width: renderer.width, height: renderer.height }, ui.mode);
+    session.start({ width: renderer.width, height: renderer.height }, ui.mode, ui.practiceDrill);
     renderer.resetEffects();
     feedback.reset();
     ui.resetRound();
     ui.isNewRecord = false;
     lastObservedScore = -1;
     const snapshot = session.getSnapshot();
-    camera.update(snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
+    camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
   }
   input.reset();
   accumulator = 0;
@@ -106,7 +123,7 @@ function restart() {
     return;
   }
   start(true);
-  ui.toast("新的一局，新的微光");
+  ui.toast(session.getSnapshot().practice ? "练习已重置，重新试一次" : "新的一局，新的微光");
 }
 
 function toggleFocus() {
@@ -139,7 +156,7 @@ function handleEvents(events) {
     ui.focusOnStart(); renderer.resize(); renderer.resetEffects(); feedback.reset(); ui.resetRound(); input.reset();
     ui.isNewRecord = false; lastObservedScore = -1;
     const snapshot = session.getSnapshot();
-    camera.update(snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
+    camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
     music.setGameState(session.state, { restart: true }); effects.setGameState(session.state, { restart: true });
     unlockAudio();
     canvas.focus({ preventScroll: true });
@@ -156,25 +173,50 @@ function handleEvents(events) {
   if (session instanceof RemoteSession && events.some(event => event.type === "record_saved")) {
     void scores.load();
   }
+  if (events.some(event => event.type === 'history_saved')) void history.load();
+  if (events.some(event => event.type === 'networkresume')) {
+    // 断线期间可能已经结算，恢复后主动核对，补上未收到的保存通知。
+    void history.load(); void scores.load();
+  }
 }
 
 ui.onFocusChange = () => {
   input.reset();
   renderer.resize();
   const snapshot = session.getSnapshot();
-  camera.update(snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
+  camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
   window.scrollTo({ top: 0, behavior: "auto" });
 };
 ui.bind({
   start, pause: togglePause, restart, focus: toggleFocus,
   theme: theme => { renderer.theme = theme; },
+  quality: mode => { renderer.setQuality(mode); ui.renderQuality(renderer.quality); },
   split: () => { input.requestSplit(); canvas.focus({ preventScroll: true }); },
   spore: () => { input.requestSpore(); canvas.focus({ preventScroll: true }); },
+  sporeHold: held => input.setSporeHeld(held),
+  regroupHold: held => input.setRegroupHeld(held),
+  practiceReset: restart,
+  practiceNext: () => {
+    const practice = session.getSnapshot().practice;
+    if (!practice) return;
+    ui.practiceDrill = practice.nextId;
+    document.getElementById("practice-drill").value = ui.practiceDrill;
+    start(true);
+  },
+  practiceExit: () => {
+    if (session instanceof RemoteSession || !session.getSnapshot().practice) return;
+    localSession.world.reset(); localSession.state = "ready";
+    ui.mode = "classic"; document.getElementById("game-mode").value = "classic";
+    input.reset(); feedback.reset(); renderer.resetEffects(); ui.resetRound(); ui.lastState = "";
+    music.setGameState("ready"); effects.setGameState("ready"); renderHud();
+  },
   music: () => { music.setEnabled(!music.enabled); unlockAudio(); },
   volume: value => { music.setVolume(value); unlockAudio(); },
   effects: () => { effects.setEnabled(!effects.enabled); unlockAudio(); },
 });
 input.onCommand = command => {
+  if (command.startsWith('signal:')) { tactics.arm(command.split(':')[1]); return; }
+  if (command === 'escape' && tactics.cancel()) return;
   if (command === "restart") restart();
   else if (command === "focus") toggleFocus();
   else togglePause();
@@ -182,11 +224,12 @@ input.onCommand = command => {
 
 // 固定步长模拟，显示帧率不会影响移动速度。切走页面时暂停，避免后台追帧。
 function frame(now) {
+  renderer.frameMs = now - lastFrame;
   const dt = Math.max(0, Math.min((now - lastFrame) / 1000, CONFIG.simulation.maxFrameTime));
   lastFrame = now;
   if (camera.width !== renderer.width || camera.height !== renderer.height) {
     const snapshot = session.getSnapshot();
-    camera.update(snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
+    camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
     input.reset();
     lastHudUpdate = 0;
   }
@@ -206,8 +249,9 @@ function frame(now) {
     if (session.state === "gameover") {
       music.setGameState("gameover");
       effects.setGameState("gameover");
-      ui.isNewRecord = session.getSnapshot().score > recordAtStart;
+      ui.isNewRecord = isRankedRound(session.getSnapshot()) && session.getSnapshot().score > recordAtStart;
       syncScore();
+      history.capture(session.getSnapshot(), localSession.roundId);
       input.reset();
     }
   } else {
@@ -215,16 +259,19 @@ function frame(now) {
   }
 
   const snapshot = session.getSnapshot();
-  if (!(session instanceof RemoteSession) && snapshot.score !== lastObservedScore) {
+  if (isRankedRound(snapshot) && snapshot.score !== lastObservedScore) {
     scores.observe(snapshot.score);
     lastObservedScore = snapshot.score;
   }
-  camera.update(snapshot.player, snapshot.bounds, renderer.width, renderer.height, dt);
+  camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, dt);
+  renderer.aim = input.getAim(camera.worldToScreen(snapshot.player), camera.getView());
   const visualState = feedback.update(snapshot);
   // HUD 限制到 10Hz，避免每个显示帧都触发不必要的 DOM 更新。
   if (now - lastHudUpdate > 100 || ui.lastState !== snapshot.state) {
     ui.render(snapshot, visualState);
+    ui.renderQuality(renderer.quality);
     lobby.render(snapshot);
+    tactics.render(snapshot);
     renderer.labelObstacles = ui.getLabelObstacles(canvas.getBoundingClientRect());
     lastHudUpdate = now;
   }
@@ -253,7 +300,9 @@ window.addEventListener("pagehide", () => {
   remoteSession?.close();
 });
 window.addEventListener("online", () => { void scores.load(); });
+window.addEventListener('online', () => { void history.flush(); void history.load(); });
 setInterval(() => {
+  void history.flush();
   if (scores.status === "offline") void scores.load();
   else void scores.flush();
 }, 5000);
@@ -266,4 +315,6 @@ if (/^\d{6}$/.test(new URLSearchParams(location.search).get("room") ?? "")) {
   ui.onModeChange("multiplayer");
 }
 void scores.load();
+void history.load();
+void history.flush();
 requestAnimationFrame(frame);

@@ -110,7 +110,8 @@ export class SplitAbility {
     this.cooldown = Math.max(0, this.cooldown - dt);
     const pressed = Boolean(input.split);
     const group = summarizeCells(cells, cells[0]);
-    const aim = Math.hypot(input.x, input.y) > 0.05 ? input : { x: group.vx, y: group.vy };
+    const targetAim = input.target ? { x: input.target.x - group.x, y: input.target.y - group.y } : input;
+    const aim = Math.hypot(targetAim.x, targetAim.y) > 0.05 ? targetAim : { x: group.vx, y: group.vy };
     let children = [];
     if (pressed && !this.wasPressed && this.cooldown === 0) {
       children = splitCells(cells, aim, bounds, nextId);

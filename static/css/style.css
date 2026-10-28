@@ -1180,7 +1180,7 @@ kbd {
 .focus-mode .game-layout { display: block; }
 .focus-mode .arena-toolbar { height: 54px; }
 .focus-mode .focus-hud { display: flex; }
-.focus-mode .canvas-container { height: calc(100dvh - 176px); min-height: 260px; }
+.focus-mode .canvas-container { height: calc(100dvh - 176px - var(--tactical-height, 0px)); min-height: 260px; }
 .focus-mode .arena-footer { height: 34px; }
 .focus-mode .arena-footer > span { display: inline; }
 
@@ -1212,7 +1212,7 @@ kbd {
   .focus-mode .arena-title { width: auto; }
   .focus-mode .focus-hud { gap: 14px; width: 100%; order: 3; font-size: 10px; }
   .focus-mode .focus-hud strong { font-size: 13px; margin-left: 4px; }
-  .focus-mode .canvas-container { height: calc(100dvh - 226px); }
+  .focus-mode .canvas-container { height: calc(100dvh - 226px - var(--tactical-height, 0px)); }
   .focus-mode .arena-footer > span { display: none; }
 }
 
@@ -1301,7 +1301,7 @@ kbd {
 @media (min-width: 761px) and (max-width: 1100px) {
   .focus-mode .arena-toolbar { flex-wrap: wrap; height: auto; min-height: 84px; padding-block: 10px; gap: 10px; }
   .focus-mode .focus-hud { width: 100%; order: 3; }
-  .focus-mode .canvas-container { height: calc(100dvh - 210px); }
+  .focus-mode .canvas-container { height: calc(100dvh - 210px - var(--tactical-height, 0px)); }
 }
 @media (max-width: 760px) {
   .effects-toggle { padding: 8px; }
@@ -1359,14 +1359,14 @@ kbd {
 .survival-result { font-size: 12px; line-height: 1.8; color: var(--accent); padding: 0 0 12px; }
 .survival-guide { color: var(--muted); font-size: 11px; line-height: 1.8; margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--border); }
 .leaderboard-row.is-eliminated { opacity: .55; }
-.focus-mode .arena-panel:has(.survival-hud:not([hidden])) .canvas-container { height: calc(100dvh - 218px); }
+.focus-mode .arena-panel:has(.survival-hud:not([hidden])) .canvas-container { height: calc(100dvh - 218px - var(--tactical-height, 0px)); }
 @media (max-width: 1100px) and (min-width: 761px) {
-  .focus-mode .arena-panel:has(.survival-hud:not([hidden])) .canvas-container { height: calc(100dvh - 252px); }
+  .focus-mode .arena-panel:has(.survival-hud:not([hidden])) .canvas-container { height: calc(100dvh - 252px - var(--tactical-height, 0px)); }
 }
 @media (max-width: 760px) {
   .survival-hud { gap: 8px 15px; font-size: 10px; padding: 10px; }
   .survival-hud strong { font-size: 12px; }
-  .focus-mode .arena-panel:has(.survival-hud:not([hidden])) .canvas-container { height: calc(100dvh - 268px); }
+  .focus-mode .arena-panel:has(.survival-hud:not([hidden])) .canvas-container { height: calc(100dvh - 268px - var(--tactical-height, 0px)); }
   .mode-selector { padding: 11px; margin-bottom: 15px; }
 }
 @media (max-width: 360px) {
@@ -1402,21 +1402,38 @@ kbd {
 .room-members strong { color: var(--muted); font-weight: 400; flex-shrink: 0; }
 .room-members [data-ready="true"] strong { color: var(--accent); }
 .room-members [data-connected="false"] strong { color: var(--gold); }
+.room-teams { margin: 12px 0; }
+.room-team-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.room-team-option { white-space: pre-line; overflow-wrap: anywhere; padding: 10px 8px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 11px; line-height: 1.8; text-align: left; cursor: pointer; }
+.room-team-option[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.room-team-option:disabled { cursor: default; opacity: 1; }
+.room-team-option:disabled:not([aria-pressed="true"]) { opacity: .55; }
+.room-team-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .room-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
 .room-invitation { border-top: 1px solid var(--border); padding-top: 10px; }
 .room-invitation .text-button { font-size: 11px; }
 .room-invitation span { font-size: 10px; color: var(--muted); }
 .room-invitation input { margin-top: 8px; font-size: 10px; }
 .overlay-card:has(.multiplayer-panel:not([hidden])) { width: 410px; }
-.focus-mode .arena-panel:has(.network-hud:not([hidden])) .canvas-container { height: calc(100dvh - 260px); }
+.focus-mode .arena-panel:has(.network-hud:not([hidden])) .canvas-container { height: calc(100dvh - 260px - var(--tactical-height, 0px)); }
 @media (max-width: 1100px) and (min-width: 761px) {
-  .focus-mode .arena-panel:has(.network-hud:not([hidden])) .canvas-container { height: calc(100dvh - 294px); }
+  .focus-mode .arena-panel:has(.network-hud:not([hidden])) .canvas-container { height: calc(100dvh - 294px - var(--tactical-height, 0px)); }
 }
 @media (max-width: 760px) {
   .network-hud { padding: 9px 12px; font-size: 10px; }
   .network-hud > span { overflow-wrap: anywhere; line-height: 1.6; }
-  .focus-mode .arena-panel:has(.network-hud:not([hidden])) .canvas-container { height: calc(100dvh - 310px); }
+  .focus-mode .arena-panel:has(.network-hud:not([hidden])) .canvas-container { height: calc(100dvh - 310px - var(--tactical-height, 0px)); }
 }
+
+/* 新玩法提示保留在开始与结算卡片中，专注模式也能确认版本。 */
+.release-badge { display: inline-flex; align-items: center; gap: 10px; padding: 6px 11px; margin-bottom: 14px; color: var(--accent); border: 1px solid var(--border); border-radius: 20px; font-size: 10px; letter-spacing: .04em; }
+.release-badge span { color: var(--muted); letter-spacing: 0; }
+.ability-main > span:not(.ability-symbol) { white-space: nowrap; }
+.ability-main kbd { white-space: nowrap; flex-shrink: 0; font-size: 8px; padding-inline: 3px; }
+.danger-hint { position: absolute; z-index: 2; top: 72px; left: 50%; transform: translateX(-50%); padding: 6px 12px; border: 1px solid #b66d6070; border-radius: 20px; background: var(--surface); color: #e7a193; font-size: 11px; white-space: nowrap; pointer-events: none; }
+[data-theme="light"] .danger-hint { color: #9e4437; }
+#spore-button { touch-action: none; user-select: none; -webkit-user-select: none; }
+@media (max-width: 760px) { .danger-hint { top: 96px; font-size: 10px; } }
 
 /* 15. v0.10：房间规则、团队比分与独立多点触控摇杆。 */
 .room-rules { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-block: 14px; }
@@ -1434,18 +1451,144 @@ kbd {
 .touch-joystick[data-active="true"] { border-color: var(--accent); }
 .touch-joystick[data-active="true"] .joystick-thumb { opacity: .9; }
 .joystick-caption { position: absolute; width: 100%; bottom: -22px; text-align: center; color: var(--muted); font-size: 10px; pointer-events: none; }
-.focus-mode .arena-panel:has(#team-hud:not([hidden])) .canvas-container { height: calc(100dvh - 300px); }
+.focus-mode .arena-panel:has(#team-hud:not([hidden])) .canvas-container { height: calc(100dvh - 300px - var(--tactical-height, 0px)); }
 @media (max-width: 1100px) and (min-width: 761px) {
-  .focus-mode .arena-panel:has(#team-hud:not([hidden])) .canvas-container { height: calc(100dvh - 334px); }
+  .focus-mode .arena-panel:has(#team-hud:not([hidden])) .canvas-container { height: calc(100dvh - 334px - var(--tactical-height, 0px)); }
 }
 @media (max-width: 760px) {
   .team-hud { gap: 6px 14px; font-size: 10px; }
   .network-quality { max-width: 155px; white-space: normal; text-align: right; line-height: 1.6; }
-  .focus-mode .arena-panel:has(#team-hud:not([hidden])) .canvas-container { height: calc(100dvh - 360px); }
+  .focus-mode .arena-panel:has(#team-hud:not([hidden])) .canvas-container { height: calc(100dvh - 360px - var(--tactical-height, 0px)); }
 }
 @media (pointer: coarse), (max-width: 760px) {
   body[data-playing="true"] .touch-joystick { display: block; }
   body[data-playing="true"] .ability-panel { left: auto; right: 12px; bottom: 16px; width: 145px; max-width: 44%; grid-template-columns: 1fr; }
   body[data-playing="true"] .ability-panel .cell-status { display: none; }
   .canvas-container, .focus-mode .canvas-container { min-height: 360px; }
+}
+
+/* 16. v0.12：聚拢是持续输入；练习目标独占画布外一行，结算统计按局展示。 */
+.regroup-button { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface); touch-action: none; user-select: none; -webkit-user-select: none; font-size: 11px; }
+.regroup-button > span:nth-child(2) { color: var(--muted); font-size: 9px; }
+.regroup-button kbd { margin-left: auto; }
+.regroup-button[aria-pressed="true"] { border-color: var(--accent); background: var(--surface-raised); color: var(--accent); }
+.practice-selector { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+.practice-hud { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--surface-raised); }
+.practice-copy { display: grid; gap: 5px; font-size: 11px; line-height: 1.6; color: var(--muted); }
+.practice-copy strong { color: var(--accent); font-size: 13px; }
+#practice-progress { color: var(--text); font-variant-numeric: tabular-nums; }
+.practice-hud[data-complete="true"] #practice-progress { color: var(--accent); }
+.practice-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.practice-actions .room-button { padding: 8px 11px; }
+.practice-actions .text-button { font-size: 11px; }
+.round-recap { text-align: left; border-top: 1px solid var(--border); padding-top: 12px; margin-bottom: 18px; }
+.round-recap summary { color: var(--accent); font-size: 12px; cursor: pointer; }
+.round-recap dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0 0; }
+.round-recap dt { color: var(--muted); font-size: 10px; }
+.round-recap dd { margin: 4px 0 0; color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }
+.focus-mode .arena-panel:has(#practice-hud:not([hidden])) .canvas-container { height: calc(100dvh - 278px - var(--tactical-height, 0px)); }
+@media (min-width: 761px) and (max-width: 1100px) {
+  .focus-mode .arena-panel:has(#practice-hud:not([hidden])) .canvas-container { height: calc(100dvh - 312px - var(--tactical-height, 0px)); }
+}
+@media (max-width: 760px) {
+  .practice-hud { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
+  .practice-copy { font-size: 10px; gap: 3px; }
+  .practice-actions { justify-content: flex-end; }
+  .practice-actions .room-button { padding: 7px 10px; font-size: 11px; }
+  .regroup-button { padding: 9px 7px; font-size: 10px; }
+  .regroup-button > span:nth-child(2) { display: none; }
+  .focus-mode .arena-panel:has(#practice-hud:not([hidden])) .canvas-container { height: calc(100dvh - 384px - var(--tactical-height, 0px)); }
+}
+
+/* 17. v0.13：规则预设和详细设置复用；画质入口保留在普通与专注模式。 */
+.room-preset { margin-block: 12px; }
+.room-preset select { display: block; width: 100%; margin-top: 7px; padding: 9px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.room-advanced { margin: 12px 0; border: 1px solid var(--border); border-radius: 7px; padding: 10px; }
+.room-advanced summary { color: var(--accent); font-size: 11px; cursor: pointer; }
+.room-advanced .room-rules { margin-bottom: 0; }
+.room-advanced .room-rules label { font-size: 10px; }
+.room-advanced select { font-size: 11px; padding: 8px 5px; }
+#network-lobby[data-state="finished"] > :is(.room-rules, .room-preset, .room-advanced, .room-note, .room-members, .room-progress, .room-invitation) { display: none; }
+#network-lobby[data-state="finished"] .room-code { margin-bottom: 10px; }
+#network-lobby[data-state="finished"] .room-code strong { display: inline; font-size: 15px; letter-spacing: 2px; margin-left: 6px; }
+.round-record-note { padding: 10px; color: var(--gold); border: 1px solid var(--border); border-radius: 7px; font-size: 11px; line-height: 1.7; }
+.quality-controls { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+.quality-controls select { color: var(--text); background: var(--surface); border: 1px solid var(--border); padding: 4px 5px; border-radius: 4px; font: inherit; }
+.quality-controls select:focus-visible, .room-preset select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#quality-status { color: var(--soft); min-width: 54px; }
+@media (max-width: 760px) {
+  .arena-motto, #quality-status { display: none; }
+  .quality-controls { gap: 5px; font-size: 9px; }
+  .room-advanced { padding: 9px; }
+  .room-advanced .room-rules { gap: 8px; }
+}
+
+/* 18. v0.14：战术条放在画布外，手机技能按钮仍有独立的触摸区域。 */
+.tactical-hud { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; padding: 9px 16px; border-top: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 11px; line-height: 1.6; }
+.tactical-hud strong { color: var(--accent); font-weight: 500; }
+.tactical-buttons { display: flex; align-items: center; gap: 6px; }
+.tactical-buttons .room-button { padding: 6px 10px; font-size: 10px; }
+.signals-hud button[aria-pressed="true"] { color: var(--canvas); background: var(--accent); border-color: var(--accent); }
+.signal-aiming { cursor: crosshair; }
+.zone-hud { border-left: 3px solid #af8ed2; }
+.zone-hud[data-phase="warning"] { border-left-color: var(--gold); }
+.zone-hud[data-phase="outside"] { border-left-color: #d88d91; }
+.zone-hud[data-phase="outside"] #zone-penalty { color: #d88d91; }
+.spectator-hud label { display: flex; align-items: center; gap: 8px; }
+.spectator-hud select { max-width: 170px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 6px; font: inherit; }
+.assist-settings { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 9px 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 10px; line-height: 1.5; }
+.assist-settings label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+.assist-settings input { accent-color: var(--accent); }
+.assist-settings > span { margin-left: auto; color: var(--soft); font-size: 9px; }
+#performance-status { font-variant-numeric: tabular-nums; color: var(--accent); }
+@media (max-width: 760px) {
+  .tactical-hud { padding: 8px 12px; font-size: 10px; gap: 5px 8px; }
+  .leaderboard { top: 12px; }
+  .tactical-buttons .room-button { min-height: 34px; padding: 6px 9px; }
+  .signals-hud #signal-status, .spectator-hud #spectator-info { flex-basis: 100%; }
+  .assist-settings { padding: 8px 12px; gap: 6px 12px; }
+  .assist-settings > span { display: none; }
+  #performance-status { flex-basis: 100%; }
+}
+@media (pointer: coarse), (max-width: 760px) {
+  body[data-free-spectator="true"] .touch-joystick { display: block; }
+}
+
+/* 19. 对局档案与复盘共用质量曲线；模态框在手机上改为上下排列。 */
+.team-bot-status { margin: 0; padding: 7px 16px; background: var(--surface); color: var(--muted); border-top: 1px solid var(--border); font-size: 10px; line-height: 1.6; }
+.telemetry-view { margin-top: 16px; text-align: left; min-width: 0; }
+.telemetry-view > p:not(.recap-note) { color: var(--text); font-size: 11px; margin: 12px 0 6px; }
+.telemetry-view svg { width: 100%; height: auto; display: block; background: var(--canvas); border-radius: 8px; }
+.telemetry-view .chart-grid { stroke: var(--border); stroke-width: 1; fill: none; }
+.telemetry-view .chart-curve { stroke: var(--accent); stroke-width: 2; fill: none; stroke-linejoin: round; }
+.telemetry-view text { fill: var(--muted); font-size: 9px; }
+.death-log { list-style: none; padding: 0; margin: 8px 0; max-height: 140px; overflow: auto; }
+.death-log li { padding: 5px 0; color: var(--muted); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; border-bottom: 1px solid var(--border); }
+.recap-note { color: var(--muted); font-size: 10px; line-height: 1.8; margin: 8px 0; }
+.history-dialog { width: 780px; max-width: calc(100vw - 24px); max-height: calc(100dvh - 32px); padding: 24px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 18px; overflow-y: auto; box-shadow: 0 20px 80px #0005; }
+.history-dialog::backdrop { background: #07100c99; backdrop-filter: blur(4px); }
+.history-heading, .history-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.history-heading { position: sticky; top: 0; z-index: 1; background: var(--surface); padding-block: 6px; }
+.history-heading h2 { font-size: 22px; font-weight: 500; margin: 6px 0 10px; }
+.history-heading .eyebrow { color: var(--accent); font-size: 9px; letter-spacing: 2px; }
+.history-controls { margin: 14px 0; }
+.history-dialog select { background: var(--canvas); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font: inherit; max-width: 100%; }
+.history-controls label, .history-player-label { font-size: 11px; display: flex; align-items: center; gap: 8px; }
+.history-summary { font-size: 12px; color: var(--accent); line-height: 1.8; }
+.history-layout { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 22px; }
+.history-list { max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.history-row { flex-shrink: 0; width: 100%; text-align: left; padding: 12px; border-radius: 8px; color: var(--text); border: 1px solid var(--border); background: var(--canvas); overflow-wrap: anywhere; }
+.history-row[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--canvas)); }
+.history-row strong, .history-row span, .history-row small { display: block; font-size: 11px; font-weight: 400; line-height: 1.8; }
+.history-row small { color: var(--muted); font-size: 9px; margin-top: 4px; }
+.history-result { font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.history-detail { min-width: 0; }
+.history-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.history-stats dt { font-size: 10px; color: var(--muted); }
+.history-stats dd { margin: 4px 0 0; font-size: 12px; }
+@media (max-width: 760px) {
+  .history-dialog { padding: 18px; }
+  .history-layout { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .history-list { max-height: 185px; }
+  .history-dialog .room-button { min-height: 40px; }
 }

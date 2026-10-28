@@ -8,10 +8,11 @@ export const CONFIG = Object.freeze({
   difficulty: { refreshInterval: 8, spawnPadding: 100, maxReferenceMass: 2000 },
   // 保留旧配置字段供旧存档/测试读取，但 Shift 不再触发冲刺。
   sprint: { multiplier: 1.85, duration: 1.2, cooldown: 4.5, costRatio: 0.07, minimumMass: 24 },
-  // 吐孢子：E 键一次吐出一个小质量球，消耗自身质量但不会直接增加得分。
+  // 长按左键 / E 连续吐孢子；质量预算和冷却在规则层统一约束。
   spore: { mass: 8, minimumMass: 48, cooldown: 0.45, speed: 560, decay: 1.8, lifetime: 5, maxCount: 80 },
   // 刺球：碰撞后会把球群拆散，并损失少量质量。
-  spikes: { count: 10, radius: 58, minimumMass: 72, lossRatio: 0.08, cooldown: 1.25, pushSpeed: 300 },
+  spikes: { count: 10, radius: 58, minimumMass: 72, lossRatio: 0.08, cooldown: 1.25, pushSpeed: 300,
+    feedCount: 5, maxExtra: 6, launchSpeed: 720, launchDecay: 1.6, lifetime: 8 },
   split: {
     maxCells: 8, minimumMass: 72, cooldown: 0.75, mergeDelay: 10,
     launchSpeed: 620, launchDecay: 5, regroupSpeed: 260,

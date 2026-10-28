@@ -130,7 +130,8 @@ class FoodReplicationTests(unittest.TestCase):
                 manager.command(pid, {"type": "ready", "ready": True})
             manager.command(guest, {"type": "leave"})
             snapshot = manager.room_snapshot(room)
-            self.assertEqual([member["team"] for member in snapshot["members"]], [0, 1])
+            # 离开成员不再触发自动换队，剩余真人保留原队伍，空位由人机补齐。
+            self.assertEqual([member["team"] for member in snapshot["members"]], [0, 0])
             self.assertTrue(all(not member["ready"] for member in snapshot["members"]))
             manager.command(host, {"type": "start"})
             self.assertEqual(room.state, "waiting")

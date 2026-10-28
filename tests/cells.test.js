@@ -270,6 +270,8 @@ test("镜头按整个球群的质心和范围缩放，球群分散后仍包含�
 test("追猎者分裂有控制者配额，分身不增加 AI 名额，冷却不会重复分裂", () => {
   const world = emptyWorld();
   world.bots = [];
+  // 本项只验证分裂配额；避刺策略另有固定场景测试，不让随机刺球阻挡追击路径。
+  world.spikes = [];
   for (let i = 0; i < 3; i++) {
     const hunter = createBall({ id: `hunter${i}`, mass: 400, x: 400 + i * 900, y: 300 });
     hunter.role = "hunter";

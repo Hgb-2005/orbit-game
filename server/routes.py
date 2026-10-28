@@ -3,6 +3,8 @@
 from flask import Blueprint, jsonify, render_template, request
 
 from .database import read_record, save_record
+from .database import read_match_history, save_match_history
+from .history import local_history
 from .network_info import lan_addresses
 from urllib.parse import urlsplit
 
@@ -40,3 +42,21 @@ def submit_score():
     if type(score) is not int or not 0 <= score <= 1_000_000_000:
         return jsonify(error="score 必须是 0 到 1000000000 之间的整数。"), 400
     return jsonify(save_record(score))
+
+
+@bp.get('/api/history')
+def match_history():
+    response = jsonify(matches=read_match_history())
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@bp.post('/api/history')
+def submit_history():
+    if not request.is_json:
+        return jsonify(error='请使用 JSON 提交单机复盘。'), 415
+    try:
+        match = local_history(request.get_json(silent=True))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    return jsonify(save_match_history(match))

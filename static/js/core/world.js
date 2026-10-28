@@ -1,14 +1,16 @@
 import { BOT_COLORS, BOT_NAMES, CONFIG, FOOD_COLORS } from "../config.js";
 import { canEat, createBall, distanceSquared, growBall, moveBall } from "./entities.js";
-import { chooseBotDirection, chooseBotSplit } from "./ai.js";
+import { BOT_SKILLS, chooseBotDirection, chooseBotSplit } from "./ai.js";
 import { BOT_ROLES, getDifficulty, getStage, outsideView, roleForIndex } from "./progression.js";
 import { Sprint } from "./sprint.js";
 import { clampCell, splitCells, SplitAbility, summarizeCells, updateCellGroup } from "./cells.js";
 import { FoodHotspots } from "./hotspots.js";
 import { findRespawnPosition, SurvivalRound } from "./survival.js";
 import { consumeSpores, createSpore, updateSpores } from "./spores.js";
-import { collidesWithSpike, createSpikes } from "./spikes.js";
+import { collidesWithSpike, createSpikes, feedSpikes, updateSpikes } from "./spikes.js";
 import { SpatialGrid } from "./spatial-grid.js";
+import { RoundStats } from "./round-stats.js";
+import { PracticeCourse } from "./practice.js";
 
 /** 纯游戏状态与规则，不访问 DOM、Canvas、网络和数据库。 */
 export class World {
@@ -18,9 +20,13 @@ export class World {
     this.reset();
   }
 
-  reset(viewSize = { width: 900, height: 650 }, mode = "classic") {
-    this.mode = mode === "survival" ? "survival" : "classic";
+  reset(viewSize = { width: 900, height: 650 }, mode = "classic", drill = "split") {
+    this.mode = ["survival", "practice"].includes(mode) ? mode : "classic";
     this.survival = this.mode === "survival" ? new SurvivalRound() : null;
+    this.practice = this.mode === "practice" ? new PracticeCourse(drill) : null;
+    this.stats = new RoundStats();
+    this.regrouping = false;
+    this.botDifficulty = "standard";
     this.result = null;
     this.nextId = 0;
     this.elapsed = 0;
@@ -68,14 +74,19 @@ export class World {
     }
     this.spikes = createSpikes(this.bounds, this.random, [this.lastPlayer, ...this.bots]);
     this.spikeGrid.build(this.spikes);
+    if (this.practice) this.practice.setup(this);
+    this.stats.observe(this.playerCells);
+    this.stats.sample(0, this.playerCells, true);
   }
 
   get protectionRemaining() {
+    if (this.practice) return 0;
     if (this.survival) return this.survival.protection("player", this.elapsed);
     return Math.max(0, CONFIG.player.protectionSeconds - this.elapsed);
   }
 
   isProtected(ball) {
+    if (this.practice) return false;
     return this.survival ? this.survival.protection(ball.ownerId, this.elapsed) > 0 :
       ball.isPlayer && this.protectionRemaining > 0;
   }
@@ -153,11 +164,13 @@ export class World {
     if (input.view) this.view = input.view;
     // 到点先封盘，不在第 300 秒之后移动、吞噬或增加生命；暂停由 Session 冻结模拟时钟。
     if (this.survival && this.elapsed + dt >= this.survival.duration - 1e-8) {
+      this.stats.advance(Math.max(0, this.survival.duration - this.elapsed));
       this.elapsed = this.survival.duration;
       this.finishSurvival("timeout");
       return;
     }
     this.elapsed += dt;
+    this.stats.advance(dt);
     this.sporeCooldown = Math.max(0, this.sporeCooldown - dt);
     for (const ball of [...this.playerCells, ...this.bots]) ball.spikeCooldown = Math.max(0, ball.spikeCooldown - dt);
     // 记录本帧更新前的质量峰值；吐孢子和扎刺会改变当前质量，但不会让阶段倒退。
@@ -167,12 +180,14 @@ export class World {
     const children = this.split.update(dt, { ...input, x: direction.x, y: direction.y },
       this.playerCells, this.bounds, () => `player-${this.nextId++}`);
     for (const child of children) this.events.push({ type: "split", x: child.x, y: child.y, color: child.color });
+    this.regrouping = Boolean(input.regroup && this.playerCells.length > 1);
+    const movementTarget = this.regrouping ? this.playerGroup : input.target;
     for (const cell of this.playerCells) {
       let cellDirection = direction;
       // 鼠标输入传递世界坐标目标，各分身分别朝同一位置移动；键盘保留平行操控。
-      if (input.target && !this.sprint.remaining) {
-        const dx = input.target.x - cell.x;
-        const dy = input.target.y - cell.y;
+      if (movementTarget && !this.sprint.remaining) {
+        const dx = movementTarget.x - cell.x;
+        const dy = movementTarget.y - cell.y;
         const length = Math.hypot(dx, dy);
         const strength = Math.min(1, Math.max(0, (length - 5) / 75));
         cellDirection = length > 0 ? { x: dx / length * strength, y: dy / length * strength } : { x: 0, y: 0 };
@@ -180,20 +195,23 @@ export class World {
       moveBall(cell, cellDirection, dt, this.bounds, this.sprint.remaining > 0 ? CONFIG.sprint.multiplier : 1);
     }
 
-    this.updateBotSplits(dt);
+    if (!this.practice) this.updateBotSplits(dt);
     for (const bot of this.bots) {
       bot.thinkTimer -= dt;
-      if (bot.thinkTimer <= 0) {
+      if (!this.practice && bot.thinkTimer <= 0) {
         bot.direction = chooseBotDirection(bot, this);
-        bot.thinkTimer = CONFIG.bots.thinkInterval + this.random() * 0.1;
+        bot.thinkTimer = BOT_SKILLS[this.botDifficulty].reaction + this.random() * 0.1;
       }
       moveBall(bot, bot.direction, dt, this.bounds);
     }
 
     const sporePressed = Boolean(input.spore);
-    if (sporePressed && !this.sporeWasPressed && this.sporeCooldown === 0) this.emitSpore(input);
+    if (((sporePressed && !this.sporeWasPressed) || input.sporeHeld) && this.sporeCooldown === 0) this.emitSpore(input);
     this.sporeWasPressed = sporePressed;
     this.spores = updateSpores(this.spores, dt, this.bounds);
+    this.spikes = updateSpikes(this.spikes, dt, this.bounds);
+    this.events.push(...feedSpikes(this.spikes, this.spores, this.bounds, () => `launched-spike-${this.nextId++}`));
+    this.spores = this.spores.filter(spore => spore.alive);
     this.handleSpikes(input);
 
     const sporeBalls = [...this.playerCells, ...this.bots];
@@ -202,9 +220,10 @@ export class World {
     const sporeResult = consumeSpores(this.spores, sporeBalls, this.ballGrid);
     this.spores = sporeResult.spores;
     for (const { spore, eater } of sporeResult.consumed) {
-      if (eater.isPlayer) this.events.push({ type: "spore-eat", x: spore.x, y: spore.y, color: spore.color });
+      if (eater.isPlayer) this.events.push({ type: "spore-eat", x: spore.x, y: spore.y, color: spore.color, mass: spore.mass });
     }
     this.consumeFood();
+    this.stats.observe(this.playerCells);
     this.consumeBalls();
     const beforeMerge = this.playerCells.length;
     this.playerCells = updateCellGroup(this.playerCells, dt, this.bounds);
@@ -215,6 +234,14 @@ export class World {
     this.updateProgression();
     // 吞噬后半径会增大，需要再次收紧位置，避免小球长到地图边界之外。
     for (const ball of [...this.playerCells, ...this.bots]) clampCell(ball, this.bounds);
+    this.stats.record(this.events);
+    this.stats.observe(this.playerCells);
+    this.stats.sample(this.elapsed, this.playerCells, this.gameOver);
+    this.regrouping &&= this.playerCells.length > 1;
+    if (this.practice) {
+      this.practice.update(this, dt, input);
+      return;
+    }
     if (this.gameOver) return;
 
     if (this.hotspots.update(dt)) {
@@ -244,7 +271,7 @@ export class World {
     const source = [...this.playerCells].filter(cell => cell.alive && cell.mass >= CONFIG.spore.minimumMass)
       .sort((a, b) => b.mass - a.mass)[0];
     if (!source || this.spores.length >= CONFIG.spore.maxCount) return false;
-    let direction = { x: input.x, y: input.y };
+    let direction = input.target ? { x: input.target.x - source.x, y: input.target.y - source.y } : { x: input.x, y: input.y };
     if (Math.hypot(direction.x, direction.y) < 0.05) direction = { x: source.vx, y: source.vy };
     if (Math.hypot(direction.x, direction.y) < 0.05) direction = { x: 1, y: 0 };
     growBall(source, -CONFIG.spore.mass);
@@ -276,17 +303,17 @@ export class World {
       if (!spike) continue;
       let direction = ownerId === "player" ? { x: input.x, y: input.y } : { x: hit.vx, y: hit.vy };
       if (Math.hypot(direction.x, direction.y) < 0.05) direction = { x: hit.x - spike.x, y: hit.y - spike.y };
+      if (Math.hypot(direction.x, direction.y) < 0.05) direction = { x: 1, y: 0 };
       const length = Math.hypot(direction.x, direction.y) || 1;
       direction = { x: direction.x / length, y: direction.y / length };
-      const children = splitCells(cells, direction, this.bounds, () => `${ownerId}-spike-${this.nextId++}`);
+      splitCells(cells, direction, this.bounds, () => `${ownerId}-spike-${this.nextId++}`);
       for (const cell of cells) {
         growBall(cell, -cell.mass * CONFIG.spikes.lossRatio);
         cell.spikeCooldown = CONFIG.spikes.cooldown;
         cell.impulseX += direction.x * CONFIG.spikes.pushSpeed;
         cell.impulseY += direction.y * CONFIG.spikes.pushSpeed;
       }
-      if (children.length) for (const child of children) this.events.push({ type: "spike", x: child.x, y: child.y, color: child.color });
-      else this.events.push({ type: "spike", x: hit.x, y: hit.y, color: hit.color });
+      if (ownerId === "player") this.events.push({ type: "spike", x: hit.x, y: hit.y, color: hit.color, text: "扎刺 −8%" });
     }
   }
 
@@ -369,7 +396,7 @@ export class World {
           if (ball.isPlayer) {
             this.score += CONFIG.food.mass;
             this.foodsEaten++;
-            this.events.push({ type: "food", x: food.x, y: food.y, color: food.color });
+            this.events.push({ type: "food", x: food.x, y: food.y, color: food.color, mass: CONFIG.food.mass });
           }
           return false;
         }
@@ -392,6 +419,7 @@ export class World {
         .sort((a, b) => order.get(a) - order.get(b));
       for (const prey of candidates) {
         if (eater.id === prey.id) continue;
+        if (this.practice && prey.isPlayer) continue;
         if (this.isProtected(eater) || this.isProtected(prey)) continue;
         if (!canEat(eater, prey)) continue;
         prey.alive = false;
@@ -400,13 +428,15 @@ export class World {
         if (eater.isPlayer) {
           this.score += Math.round(prey.mass);
           this.eatenBalls++;
-          this.events.push({ type: "eat", x: prey.x, y: prey.y, color: prey.color });
+          this.events.push({ type: "eat", x: prey.x, y: prey.y, color: prey.color, mass: prey.mass });
+          this.stats.observe(this.playerCells);
         }
         if (prey.isPlayer) {
           this.killer = eater.name;
+          if (remaining.get(prey.ownerId) === 0) this.stats.death(this.elapsed, 'eaten', eater.name, prey.mass);
           if (!this.survival || remaining.get(prey.ownerId) > 0) {
-            this.events.push({ type: "celllost", x: prey.x, y: prey.y, color: prey.color });
-          }
+            this.events.push({ type: "celllost", x: prey.x, y: prey.y, color: prey.color, mass: prey.mass });
+          } else this.stats.record([{ type: "celllost" }]);
         }
         if (this.survival && remaining.get(prey.ownerId) === 0) {
           const victim = this.survival.recordDeath(prey.ownerId, eater.ownerId, this.elapsed);
@@ -447,6 +477,7 @@ export class World {
       this.split = new SplitAbility();
       this.sporeCooldown = 0;
       this.sporeWasPressed = false;
+      this.stats.sample(this.elapsed, [ball], true);
     } else this.bots.push(ball);
     this.events.push({ type: "respawn", ownerId: owner.ownerId, isPlayer: owner.isPlayer,
       lives: owner.lives, x: ball.x, y: ball.y, color: ball.color });
@@ -457,6 +488,7 @@ export class World {
     const snapshot = this.survival.getSnapshot([...this.playerCells, ...this.bots], this.elapsed);
     const player = snapshot.player;
     this.gameOver = true;
+    this.stats.sample(this.elapsed, this.playerCells, true);
     this.result = { reason, rank: player.rank, lives: player.lives, kills: player.kills, deaths: player.deaths,
       won: reason !== "eliminated" && player.rank === 1,
       winners: snapshot.standings.filter(owner => owner.rank === 1).map(owner => owner.name) };
@@ -470,15 +502,17 @@ export class World {
       else this.botSplitCooldowns.set(owner, Math.max(0, this.botSplitCooldowns.get(owner) - dt));
     }
     // 只有两名追猎者可分裂，每名最多两个分身，保持单机局势可读。
-    const hunters = [...groups.values()].filter(cells => cells[0].role === "hunter").slice(0, CONFIG.split.hunterGroups);
+    const skills = BOT_SKILLS[this.botDifficulty];
+    const hunters = [...groups.values()].filter(cells => cells[0].role === "hunter" || this.botDifficulty === "challenge" && cells[0].role === "rival")
+      .slice(0, this.botDifficulty === "challenge" ? 4 : CONFIG.split.hunterGroups);
     for (const cells of hunters) {
       const bot = cells[0];
-      if (cells.length >= CONFIG.split.hunterMaxCells || (this.botSplitCooldowns.get(bot.ownerId) ?? 0) > 0) continue;
+      if (cells.length >= skills.maxCells || (this.botSplitCooldowns.get(bot.ownerId) ?? 0) > 0) continue;
       const direction = chooseBotSplit(bot, this);
       if (!direction) continue;
-      const children = splitCells(cells, direction, this.bounds, () => `bot-${this.nextId++}`, CONFIG.split.hunterMaxCells);
+      const children = splitCells(cells, direction, this.bounds, () => `bot-${this.nextId++}`, skills.maxCells);
       this.bots.push(...children);
-      if (children.length) this.botSplitCooldowns.set(bot.ownerId, CONFIG.split.hunterCooldown);
+      if (children.length) this.botSplitCooldowns.set(bot.ownerId, skills.rest);
     }
   }
 }

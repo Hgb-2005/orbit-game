@@ -9,8 +9,8 @@
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0100">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0100">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0160">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0160">
     </script>
   </head>
   <body>
@@ -159,12 +159,42 @@
             <div id="team-hud" class="team-hud" aria-label="团队比分" hidden>
               <span id="team-mint"></span><span id="team-nebula"></span>
             </div>
+            <p id="team-bot-status" class="team-bot-status" role="status" hidden></p>
+            <div id="zone-hud" class="tactical-hud zone-hud" hidden>
+              <strong id="zone-status"></strong><span id="zone-penalty"></span>
+            </div>
+            <div id="signals-hud" class="tactical-hud signals-hud" aria-label="队友标点" hidden>
+              <div class="tactical-buttons">
+                <button id="signal-gather" class="room-button" type="button" aria-pressed="false">1 集合</button>
+                <button id="signal-help" class="room-button" type="button" aria-pressed="false">2 支援</button>
+                <button id="signal-danger" class="room-button" type="button" aria-pressed="false">3 危险</button>
+                <button id="signal-cancel" class="text-button" type="button" hidden>取消</button>
+              </div>
+              <span id="signal-status" role="status"></span>
+            </div>
+            <div id="spectator-hud" class="tactical-hud spectator-hud" aria-label="观战控制" hidden>
+              <label>观战 <select id="spectator-select" aria-label="选择观战对象"><option value="free">自由镜头</option></select></label>
+              <div class="tactical-buttons"><button id="spectator-prev" class="room-button" type="button">上一位</button><button id="spectator-next" class="room-button" type="button">下一位</button></div>
+              <span id="spectator-info"></span>
+            </div>
+            <div id="practice-hud" class="practice-hud" aria-label="练习目标" hidden>
+              <div class="practice-copy">
+                <strong id="practice-title">分裂吞噬</strong>
+                <span id="practice-instruction"></span>
+                <span id="practice-progress" role="status"></span>
+              </div>
+              <div class="practice-actions">
+                <button id="practice-reset" class="room-button" type="button">重练</button>
+                <button id="practice-next" class="room-button room-primary" type="button" disabled>下一项</button>
+                <button id="practice-exit" class="text-button" type="button">退出练习</button>
+              </div>
+            </div>
             <div id="canvas-container" class="canvas-container">
               <div id="touch-joystick" class="touch-joystick" role="group" aria-label="触屏移动摇杆，拖动控制方向" data-active="false">
                 <span class="joystick-thumb"></span><span class="joystick-caption">移动</span>
               </div>
               <!-- renderer.js 只绘制这个画布；覆盖层使用 HTML，便于键盘访问。 -->
-              <canvas id="game-canvas" aria-label="微光球场：鼠标或 WASD 移动，鼠标左键或 E 吐孢子，鼠标右键或 Q 分身，靠近绿色刺球会扎刺分裂，空格暂停，F 切换专注模式。" tabindex="0">
+              <canvas id="game-canvas" aria-label="微光球场：鼠标或 WASD 移动，长按鼠标左键或 E 连吐孢子，鼠标右键或 Q 分身，按住 C 聚拢分身，喂固定绿色刺球五颗孢子可发射反击刺，空格暂停，F 切换专注模式。" tabindex="0">
               </canvas>
               <div class="arena-corner">
                 <span class="live-mark">
@@ -181,6 +211,7 @@
                 <span class="hotspot-dot" aria-hidden="true"></span><span id="hotspot-status">富集区 · 45s 后换位</span>
               </div>
               <span id="feedback-announcement" class="screen-reader-only" role="status" aria-live="polite" aria-atomic="true"></span>
+              <div id="danger-hint" class="danger-hint" role="status" hidden></div>
               <!-- 排名按控制者总质量统计，details 让手机上可以随时展开/收起。 -->
               <details id="leaderboard" class="leaderboard" open>
                 <summary><span>本局排行</span><strong id="leaderboard-rank">—</strong></summary>
@@ -204,19 +235,23 @@
                     <span class="ability-main"><span class="ability-symbol" aria-hidden="true">◉</span><span id="split-label">质量不足</span><kbd>右键 / Q</kbd></span>
                     <span class="sprint-track"><span id="split-progress"></span></span>
                   </button>
-                  <span class="ability-hint">单球 ≥ 72 · 分裂不扣分</span>
+                  <span id="split-hint" class="ability-hint">单球 ≥ 72 · 分裂不扣分</span>
                 </div>
                 <div class="ability-card">
-                  <button id="spore-button" class="sprint-button" type="button" title="吐出一个 8 m 孢子：自身至少需要 48 m，冷却 0.45 秒；也可按 E。" data-state="ready">
+                  <button id="spore-button" class="sprint-button" type="button" title="长按左键 / E / 此按钮连续吐孢子：单球至少 48 m，每颗消耗 8 m，间隔 0.45 秒；喂固定绿色刺球 5 颗可发射反击刺。" data-state="ready">
                     <span class="ability-main"><span class="ability-symbol" aria-hidden="true">✦</span><span id="spore-label">吐孢子就绪</span><kbd>左键 / E</kbd></span>
                     <span class="sprint-track"><span id="spore-progress"></span></span>
                   </button>
-                  <span class="ability-hint">消耗 8 m · 孢子可被任何球吃掉</span>
+                  <span id="spore-hint" class="ability-hint">长按连吐 · 喂刺 5 颗发射反击</span>
                 </div>
+                <button id="regroup-button" class="regroup-button" type="button" aria-pressed="false" title="按住 C 或此按钮向球群中心聚拢；合体仍需等待 10 秒冷却。" disabled>
+                  <span id="regroup-label">按住聚拢</span><span>保留合体冷却</span><kbd>C</kbd>
+                </button>
                 <div class="cell-status"><strong id="cell-count">1 / 8 分身</strong><span class="group-mass">总质量 <b id="group-mass">36</b></span><span id="cell-quality">最大 36 · 最小 36</span><span id="merge-status">长大后右键分身</span></div>
               </div>
               <div id="game-overlay" class="game-overlay">
                 <div class="overlay-card">
+                  <div class="release-badge">V0.16.0 <span>移动预测 · 平滑校正 · 手动选队</span></div>
                   <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
                     <span>
                     </span>
@@ -242,8 +277,18 @@
                       <option value="classic">经典 · 自由生长</option>
                       <option value="survival">生存 · 5 分钟</option>
                       <option value="multiplayer">联机 · 真人 + 人机（最多 4 名）</option>
+                      <option value="practice">练习场 · 三项操作训练</option>
                     </select>
                     <p id="mode-description">自由探索，全部分身被吃后结束。</p>
+                    <div id="practice-selector" class="practice-selector" hidden>
+                      <label for="practice-drill">练习项目</label>
+                      <select id="practice-drill">
+                        <option value="split">1 · 分裂吞噬</option>
+                        <option value="feed">2 · 喂刺反击</option>
+                        <option value="regroup">3 · 聚拢合体</option>
+                      </select>
+                      <p id="practice-description"></p>
+                    </div>
                   </div>
                   <div id="multiplayer-panel" class="multiplayer-panel" hidden>
                     <p id="network-error" class="network-error" role="alert"></p>
@@ -251,9 +296,11 @@
                       <label for="nickname">你的昵称</label>
                       <input id="nickname" maxlength="12" autocomplete="nickname" placeholder="1～12 个字">
                       <div class="room-rules">
-                        <label>对局玩法<select id="new-room-mode"><option value="survival">生存乱斗</option><option value="teams">2v2 团队</option></select></label>
+                        <label>对局玩法<select id="new-room-mode"><option value="survival">生存乱斗</option><option value="shrink">缩圈乱斗</option><option value="teams">2v2 团队</option></select></label>
                         <label>对局时长<select id="new-room-duration"><option value="180">3 分钟</option><option value="300" selected>5 分钟</option><option value="480">8 分钟</option></select></label>
                       </div>
+                      {% set rules_prefix = 'new-room' %}{% include '_room_options.html' %}
+                      <p id="new-room-note" class="room-note"></p>
                       <button id="create-room" class="primary-button" type="button">创建房间</button>
                       <div class="room-join">
                         <label for="room-code-input" class="screen-reader-only">6 位数字房间号</label>
@@ -264,10 +311,19 @@
                     </div>
                     <div id="network-lobby" hidden>
                       <div class="room-code">房间号 <strong id="room-number">—</strong></div>
+                      <div id="room-teams" class="room-teams" hidden>
+                        <p id="room-team-status" class="room-note" role="status"></p>
+                        <div class="room-team-options" role="group" aria-label="选择自己的队伍">
+                          <button id="room-team-0" class="room-team-option" type="button" aria-pressed="false"></button>
+                          <button id="room-team-1" class="room-team-option" type="button" aria-pressed="false"></button>
+                        </div>
+                        <p class="room-note">每队 2 席，空位由人机补齐。换队后全员重新准备；请在满员前选好队伍。</p>
+                      </div>
                       <div class="room-rules">
-                        <label>对局玩法<select id="room-mode"><option value="survival">生存乱斗</option><option value="teams">2v2 团队</option></select></label>
+                        <label>对局玩法<select id="room-mode"><option value="survival">生存乱斗</option><option value="shrink">缩圈乱斗</option><option value="teams">2v2 团队</option></select></label>
                         <label>对局时长<select id="room-duration"><option value="180">3 分钟</option><option value="300">5 分钟</option><option value="480">8 分钟</option></select></label>
                       </div>
+                      {% set rules_prefix = 'room' %}{% include '_room_options.html' %}
                       <p id="room-rules-note" class="room-note"></p>
                       <ol id="room-members" class="room-members" aria-label="房间成员"></ol>
                       <div class="room-buttons">
@@ -304,6 +360,12 @@
                     </div>
                   </div>
                   <p id="survival-result" class="survival-result" hidden></p>
+                  <p id="round-record-note" class="round-record-note" role="status" hidden></p>
+                  <details id="round-recap" class="round-recap" open hidden>
+                    <summary>本局复盘</summary>
+                    <dl id="recap-items"></dl>
+                    <div id="recap-timeline"></div>
+                  </details>
                   <button id="start-button" class="primary-button" type="button">
                     <span id="start-label">
                       开始游戏
@@ -329,12 +391,26 @@
                 </span>
                 <span id="opponent-legend">AI 小球</span>
               </div>
-              <span>
+              <label class="quality-controls" for="quality-select">
+                <span>画质</span>
+                <select id="quality-select" aria-label="画质，设置只影响绘制效果">
+                  <option value="auto">自动</option><option value="smooth">流畅</option><option value="balanced">均衡</option><option value="detailed">精致</option>
+                </select>
+                <span id="quality-status">自动 · 均衡</span>
+              </label>
+              <span class="arena-motto">
                 越大，越要从容
                 <span class="footer-spark">
                   ✧
                 </span>
               </span>
+            </div>
+            <div class="assist-settings">
+              <button id="history-open" class="text-button" type="button">对局记录</button>
+              <label><input id="split-preview" type="checkbox"> 分裂方向预览</label>
+              <label><input id="performance-toggle" type="checkbox"> 显示性能</label>
+              <output id="performance-status" hidden></output>
+              <span>预览为短时弹射参考，不保证吞噬命中</span>
             </div>
           </section>
           <!-- 分数由 scores.js 同步到 Flask，ui.js 负责显示。 -->
@@ -484,7 +560,8 @@
               </div>
               <div class="keyboard-tips">
                 <span><kbd>右键 / Q</kbd> 分身 · 10s 后合体</span>
-                <span><kbd>左键 / E</kbd> 吐孢子 · 绿色刺球会扎刺分裂</span>
+                <span><kbd>按住 C</kbd> 聚拢分身 · 松开恢复移动</span>
+                <span><kbd>长按左键 / E</kbd> 连吐孢子 · 喂刺 5 颗发射反击</span>
                 <span><kbd>F</kbd> 专注</span>
                 <span>
                   <kbd>
@@ -503,6 +580,7 @@
             </section>
           </aside>
         </div>
+        {% include '_history.html' %}
         <footer class="page-footer">
           <span>
             <span class="status-dot">
@@ -518,7 +596,7 @@
             <i>
               /
             </i>
-            V.0100
+            V.0160
           </span>
         </footer>
         <noscript>

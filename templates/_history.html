@@ -1,0 +1,20 @@
+<!-- 战绩为本机服务共用，无账号身份；每场联机仅存一条，可切换查看真人复盘。 -->
+<dialog id="history-dialog" class="history-dialog" aria-labelledby="history-title" aria-describedby="history-status">
+  <div class="history-heading"><div><span class="eyebrow">ROUND ARCHIVE</span><h2 id="history-title">对局记录</h2></div><button id="history-close" class="room-button" type="button" autofocus>关闭</button></div>
+  <p id="history-status" class="recap-note" role="status">正在读取记录…</p>
+  <div class="history-controls">
+    <label>模式 <select id="history-filter"><option value="all">全部模式</option><option value="classic">单机经典</option><option value="survival">单机生存</option><option value="network-survival">联机生存</option><option value="teams">2v2 团队</option><option value="shrink">缩圈乱斗</option></select></label>
+    <button id="history-refresh" class="room-button" type="button">刷新记录</button>
+  </div>
+  <p id="history-summary" class="history-summary"></p>
+  <p id="history-empty" class="recap-note">还没有该模式的记录，完成一局后回来看看。</p>
+  <div class="history-layout">
+    <div id="history-list" class="history-list" role="group" aria-label="选择最近对局"></div>
+    <section id="history-detail" class="history-detail" aria-label="所选对局复盘" hidden>
+      <label class="history-player-label">查看玩家 <select id="history-player"></select></label>
+      <p id="history-result" class="history-result"></p>
+      <dl id="history-stats" class="history-stats"></dl>
+      <div id="history-telemetry"></div>
+    </section>
+  </div>
+</dialog>

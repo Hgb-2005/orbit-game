@@ -6,6 +6,11 @@ import random
 from .entities import BOUNDS, INITIAL_MASS, MAX_CELLS, ball, clamp, grow, keep_inside, merge, move, split
 from .spatial import SpatialGrid
 from .rules import RoomRules, TEAMS
+from .spikes import feed_spikes, update_spikes
+from .stats import RoundStats
+from .ai import decide, avoid_spikes, PROFILES
+from .safe_zone import SafeZone
+from .signals import TeamSignals
 
 COLORS = ["#b4efcc", "#dd998d", "#b2a4dc", "#88adc9"]
 BOT_NAMES = ["人机·薄荷", "人机·追猎", "人机·小橘"]
@@ -27,18 +32,23 @@ SPIKE_PUSH_SPEED = 300
 
 
 def neutral():
-    return {"x": 0, "y": 0, "target": None, "sprint": False, "split": False, "spore": False}
+    return {"x": 0, "y": 0, "target": None, "sprint": False, "split": False, "spore": False, "sporeHeld": False, "regroup": False}
 
 
 class MultiplayerWorld:
     duration = 300
     food_count = 560
+    bounds_width, bounds_height = BOUNDS["width"], BOUNDS["height"]
 
     def __init__(self, members, rng=None, rules=None):
         self.rules = rules or RoomRules()
         self.duration = self.rules.duration
+        self.food_count = {"sparse": 360, "normal": 560, "rich": 800}[self.rules.foodDensity]
         self.rng = rng or random.Random()
         self.elapsed = 0
+        self.safe_zone = SafeZone(BOUNDS, self.duration) if self.rules.mode == 'shrink' else None
+        self.zone_notice = None
+        self.signals = TeamSignals()
         self.tick = 0
         self.finished = False
         self.reason = None
@@ -61,6 +71,7 @@ class MultiplayerWorld:
         self.spore_grid = SpatialGrid()
         self.spike_grid = SpatialGrid()
         self.spikes = self.create_spikes(starts)
+        team_slots = [0, 0]
         for index, member in enumerate(members):
             owner_id = member["id"]
             is_bot = bool(member.get("isBot"))
@@ -68,21 +79,34 @@ class MultiplayerWorld:
                 self.bot_ids.add(owner_id)
             else:
                 self.human_ids.add(owner_id)
-            team = index % 2 if self.rules.mode == "teams" else None
+            team = member.get("team", index % 2) if self.rules.mode == "teams" else None
+            if team is not None and (type(team) is not int or team not in (0, 1)):
+                raise ValueError("队伍必须为薄荷队或星云队。")
             owner = {"ownerId": owner_id, "name": member["name"], "team": team,
                      "color": TEAMS[team][1] if team is not None else COLORS[index],
                      "lives": 3, "kills": 0, "deaths": 0, "score": 0, "eatenBalls": 0,
-                     "peakMass": 36, "protectedUntil": 3, "connected": True, "isBot": is_bot,
-                     "input": neutral(), "lastInput": -1, "lastSeq": -1,
+                     "peakMass": 36, "protectedUntil": 3, "connected": True, "isBot": is_bot, "zoneExposure": 0,
+                     "input": neutral(), "lastInput": -1, "lastSeq": -1, "appliedSeq": -1,
                       "heldSprint": False, "heldSplit": False, "heldSpore": False,
                       "queuedSprint": False, "queuedSplit": False, "queuedSpore": False,
                      "sprintRemaining": 0, "sprintCooldown": 0, "sprintDirection": (0, 0), "splitCooldown": 0,
-                      "sporeCooldown": 0,
+                      "sporeCooldown": 0, "stats": RoundStats(),
                      "killer": "", "botRole": member.get("role", BOT_ROLES[index % len(BOT_ROLES)]),
                      "botThinkRemaining": 0 if is_bot else None, "botDirection": (0, 0)}
+            owner["botSkillRemaining"] = 0
             self.players[owner_id] = owner
-            x, y = starts[index]
+            spawn = index
+            if team is not None:
+                if team_slots[team] >= 2:
+                    raise ValueError("每队最多两个参赛者。")
+                spawn = team + team_slots[team] * 2
+                team_slots[team] += 1
+            x, y = starts[spawn]
             self.cells[owner_id] = [ball(self.new_id("cell"), owner, {"x": x, "y": y})]
+            grow(self.cells[owner_id][0], self.rules.initialMass - INITIAL_MASS)
+            owner["peakMass"] = self.rules.initialMass
+            owner["stats"].observe(self.cells[owner_id])
+            owner['stats'].sample(0, self.cells[owner_id], True)
         self.foods = [self.create_food() for _ in range(self.food_count)]
         self.spike_grid.build(self.spikes)
 
@@ -95,6 +119,9 @@ class MultiplayerWorld:
         event = {"id": self.event_id, "type": event_type, **data}
         if owner:
             event["ownerId"] = owner["ownerId"]
+        actor = owner or self.players.get(data.get("actorId"))
+        if actor:
+            actor["stats"].record(event, self.tick)
         self.events.append(event)
         # 客户端按事件 ID 去重；保留短历史，允许覆盖积压快照而不重播声音。
         self.events = self.events[-160:]
@@ -126,7 +153,8 @@ class MultiplayerWorld:
         owner["queuedSplit"] |= splitting and not owner["heldSplit"]
         owner["queuedSpore"] |= sporing and not owner["heldSpore"]
         owner["heldSprint"], owner["heldSplit"], owner["heldSpore"] = sprint, splitting, sporing
-        owner["input"] = {"x": x / length, "y": y / length, "target": target}
+        owner["input"] = {"x": x / length, "y": y / length, "target": target, "sporeHeld": message.get("sporeHeld") is True,
+                          "regroup": message.get("regroup") is True}
         owner["lastInput"], owner["lastSeq"] = self.elapsed, seq
 
     def stop_input(self, owner):
@@ -138,11 +166,20 @@ class MultiplayerWorld:
         if self.finished:
             return
         self.tick += 1
+        for owner in self.players.values():
+            if owner["lives"] > 0:
+                owner["stats"].advance(min(dt, max(0, self.duration - self.elapsed)))
         if self.elapsed + dt >= self.duration - 1e-8:
             self.elapsed = self.duration
             self.finish("timeout")
             return
         self.elapsed += dt
+        if self.safe_zone:
+            state = self.safe_zone.at(self.elapsed)
+            notice = (state['stage'], state['phase'])
+            if notice != self.zone_notice and state['phase'] in ('warning', 'shrinking'):
+                self.emit('zone-' + state['phase'], stage=state['stage'])
+            self.zone_notice = notice
         for spore in self.spores:
             if not spore["alive"]:
                 continue
@@ -164,9 +201,16 @@ class MultiplayerWorld:
             if self.elapsed - owner["lastInput"] > 1:
                 self.stop_input(owner)
             self.update_controls(owner, cells, dt)
+        self.spikes = update_spikes(self.spikes, dt, BOUNDS)
+        for event in feed_spikes(self.spikes, self.spores, BOUNDS, lambda: self.new_id("launched-spike")):
+            event_type = event.pop("type")
+            self.emit(event_type, **event)
+        self.spores = [spore for spore in self.spores if spore["alive"]]
         self.consume_food()
         self.consume_spores()
         self.handle_spikes()
+        for owner_id, cells in self.cells.items():
+            self.players[owner_id]["stats"].observe(cells)
         self.consume_balls()
         for owner_id, cells in self.cells.items():
             count = len(cells)
@@ -178,6 +222,11 @@ class MultiplayerWorld:
             owner["peakMass"] = max(owner["peakMass"], sum(c["mass"] for c in self.cells[owner_id]))
         for cell in self.all_cells():
             keep_inside(cell)
+        if self.safe_zone and not self.finished:
+            self.safe_zone.apply(self, dt)
+        for owner_id, owner in self.players.items():
+            if owner['lives'] > 0:
+                owner['stats'].sample(self.elapsed, self.cells[owner_id])
         if self.finished:
             return
         self.hotspots["remaining"] -= dt
@@ -203,60 +252,24 @@ class MultiplayerWorld:
     def update_bot_input(self, owner, cells, dt):
         """服务器端人机只生成输入，移动、吞噬和技能仍走同一套权威规则。"""
         owner["botThinkRemaining"] -= dt
-        if owner["botThinkRemaining"] > 0 and owner["botDirection"] != (0, 0):
-            direction = owner["botDirection"]
-        else:
-            direction = self.choose_bot_direction(owner, cells)
-            owner["botDirection"] = direction
-            owner["botThinkRemaining"] = .24 + self.rng.random() * .12
-        owner["input"] = {"x": direction[0], "y": direction[1], "target": None,
-                           "sprint": False, "split": False, "spore": False}
+        owner["botSkillRemaining"] = max(0, owner["botSkillRemaining"] - dt)
+        if owner["botThinkRemaining"] <= 0:
+            plan = decide(owner, cells, self)
+            owner["input"] = {**plan, "sporeHeld": False}
+            owner['teamAction'] = plan.get('teamAction', '')
+            if plan.get('spore') and owner['sporeCooldown'] == 0 and len(self.spores) < SPORE_MAX_COUNT:
+                owner['queuedSpore'] = True
+                owner['botFeedAt'] = self.elapsed + 2
+            if plan["split"]:
+                owner["queuedSplit"] = True
+                owner["botSkillRemaining"] = PROFILES[self.rules.botDifficulty]["splitRest"]
+            owner["botThinkRemaining"] = PROFILES[self.rules.botDifficulty]["reaction"] + self.rng.random() * .08
         owner["lastInput"] = self.elapsed
 
     def choose_bot_direction(self, owner, cells):
-        """轻量服务器 AI：优先躲避威胁，其次追击可吞噬目标，最后寻找食物。"""
-        bot = max(cells, key=lambda cell: cell["mass"])
-        threat = None
-        prey = None
-        threat_distance = float("inf")
-        prey_distance = float("inf")
-        for other in self.all_cells():
-            if other["ownerId"] == owner["ownerId"] or not other["alive"]:
-                continue
-            other_owner = self.players[other["ownerId"]]
-            if self.allies(owner, other_owner):
-                continue
-            if max(owner["protectedUntil"], other_owner["protectedUntil"]) > self.elapsed:
-                continue
-            distance = (other["x"] - bot["x"]) ** 2 + (other["y"] - bot["y"]) ** 2
-            if (other["mass"] >= bot["mass"] * 1.28 and
-                    distance < (other["radius"] + bot["radius"] + 210) ** 2 and distance < threat_distance):
-                threat, threat_distance = other, distance
-            if (bot["mass"] >= other["mass"] * 1.28 and
-                    distance < (bot["radius"] + other["radius"] + 760) ** 2 and distance < prey_distance):
-                prey, prey_distance = other, distance
-        if threat:
-            dx, dy = bot["x"] - threat["x"], bot["y"] - threat["y"]
-        elif prey:
-            dx, dy = prey["x"] - bot["x"], prey["y"] - bot["y"]
-        else:
-            target = min(self.foods, key=lambda food: (food["x"] - bot["x"]) ** 2 + (food["y"] - bot["y"]) ** 2,
-                         default=None)
-            if target is None:
-                dx, dy = 0, 0
-            else:
-                dx, dy = target["x"] - bot["x"], target["y"] - bot["y"]
-        edge = bot["radius"] + 75
-        if bot["x"] < edge:
-            dx += 160
-        elif bot["x"] > BOUNDS["width"] - edge:
-            dx -= 160
-        if bot["y"] < edge:
-            dy += 160
-        elif bot["y"] > BOUNDS["height"] - edge:
-            dy -= 160
-        length = math.hypot(dx, dy) or 1
-        return dx / length, dy / length
+        """保留方向接口供测试与后续模式复用，技能决策由 ai.decide 统一生成。"""
+        plan = decide(owner, cells, self)
+        return plan["x"], plan["y"]
 
     def update_controls(self, owner, cells, dt):
         owner["sprintRemaining"] = owner["sprintCooldown"] = 0
@@ -280,10 +293,14 @@ class MultiplayerWorld:
                 owner["splitCooldown"] = .75
                 for child in children:
                     self.emit("split", owner, x=child["x"], y=child["y"], color=owner["color"])
-        if owner["queuedSpore"] and owner["sporeCooldown"] == 0:
+        if (owner["queuedSpore"] or controls.get("sporeHeld")) and owner["sporeCooldown"] == 0:
             source = max((cell for cell in cells if cell["mass"] >= SPORE_MINIMUM_MASS), key=lambda cell: cell["mass"], default=None)
             if source is not None and len(self.spores) < SPORE_MAX_COUNT:
                 aim = direction if math.hypot(*direction) > .05 else (source["vx"], source["vy"])
+                if controls.get("target"):
+                    aim = (controls["target"]["x"] - source["x"], controls["target"]["y"] - source["y"])
+                if math.hypot(*aim) < .05:
+                    aim = (1, 0)
                 length = math.hypot(*aim) or 1
                 dx, dy = aim[0] / length, aim[1] / length
                 grow(source, -SPORE_MASS)
@@ -297,14 +314,22 @@ class MultiplayerWorld:
                 owner["sporeCooldown"] = SPORE_COOLDOWN
                 self.emit("spore", owner, x=spore["x"], y=spore["y"], color=owner["color"])
         owner["queuedSprint"] = owner["queuedSplit"] = owner["queuedSpore"] = False
+        owner["stats"].observe(cells)
+        mass = sum(cell["mass"] for cell in cells)
+        center = {axis: sum(cell[axis] * cell["mass"] for cell in cells) / mass for axis in ("x", "y")}
+        movement_target = center if controls.get("regroup") and len(cells) > 1 else controls.get("target")
         for cell in cells:
             cell_direction = direction
-            if controls.get("target"):
-                dx, dy = controls["target"]["x"] - cell["x"], controls["target"]["y"] - cell["y"]
+            if movement_target:
+                dx, dy = movement_target["x"] - cell["x"], movement_target["y"] - cell["y"]
                 length = math.hypot(dx, dy)
                 strength = clamp((length - 5) / 75, 0, 1)
                 cell_direction = (dx / length * strength, dy / length * strength) if length else (0, 0)
+            if owner["isBot"]:
+                cell_direction = avoid_spikes(cell, cell_direction, self.spikes)
             move(cell, cell_direction, dt)
+        # 收包序号用于去重；只有真正参与物理步的输入才能确认给预测端。
+        owner["appliedSeq"] = owner["lastSeq"]
 
     def consume_food(self):
         remaining = []
@@ -321,7 +346,7 @@ class MultiplayerWorld:
                     grow(cell, 1)
                     self.ball_grid.insert(cell)
                     self.players[cell["ownerId"]]["score"] += 1
-                    self.emit("food", self.players[cell["ownerId"]], foodId=food["id"], x=food["x"], y=food["y"], color=food["color"])
+                    self.emit("food", self.players[cell["ownerId"]], foodId=food["id"], x=food["x"], y=food["y"], color=food["color"], mass=1)
                     break
             else:
                 remaining.append(food)
@@ -342,7 +367,7 @@ class MultiplayerWorld:
             grow(eater, spore["mass"])
             self.ball_grid.insert(eater)
             spore["alive"] = False
-            self.emit("spore-eat", self.players[eater["ownerId"]], x=spore["x"], y=spore["y"], color=spore["color"])
+            self.emit("spore-eat", self.players[eater["ownerId"]], x=spore["x"], y=spore["y"], color=spore["color"], mass=spore["mass"])
         self.spores = [spore for spore in self.spores if spore["alive"]]
 
     def handle_spikes(self):
@@ -362,6 +387,8 @@ class MultiplayerWorld:
             direction = (hit["x"] - spike["x"], hit["y"] - spike["y"])
             if math.hypot(*direction) < .05:
                 direction = (hit["vx"], hit["vy"])
+            if math.hypot(*direction) < .05:
+                direction = (1, 0)
             length = math.hypot(*direction) or 1
             direction = (direction[0] / length, direction[1] / length)
             children = split(cells, direction, lambda: self.new_id("cell"))
@@ -371,7 +398,7 @@ class MultiplayerWorld:
                 cell["impulseX"] += direction[0] * SPIKE_PUSH_SPEED
                 cell["impulseY"] += direction[1] * SPIKE_PUSH_SPEED
             owner = self.players[owner_id]
-            self.emit("spike", owner, x=hit["x"], y=hit["y"], color=owner["color"])
+            self.emit("spike", owner, x=hit["x"], y=hit["y"], color=owner["color"], text="扎刺 −8%")
 
     def consume_balls(self):
         cells = sorted(self.all_cells(), key=lambda cell: -cell["mass"])
@@ -400,12 +427,15 @@ class MultiplayerWorld:
                 attacker["eatenBalls"] += 1
                 victim["killer"] = attacker["name"]
                 counts[prey["ownerId"]] -= 1
-                self.emit("eat", attacker, x=prey["x"], y=prey["y"], color=prey["color"])
+                self.emit("eat", attacker, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey["mass"])
+                attacker["stats"].observe(self.cells[eater["ownerId"]])
                 if counts[prey["ownerId"]] > 0:
-                    self.emit("celllost", victim, x=prey["x"], y=prey["y"], color=prey["color"])
+                    self.emit("celllost", victim, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey["mass"])
                 else:
+                    victim["stats"].record({"type": "celllost"}, self.tick)
                     victim["lives"] -= 1
                     victim["deaths"] += 1
+                    victim['stats'].death(self.elapsed, 'eaten', attacker['name'], prey['mass'])
                     attacker["lives"] += 1
                     attacker["kills"] += 1
                     self.emit("life", attacker, lives=attacker["lives"], victim=victim["name"])
@@ -433,6 +463,14 @@ class MultiplayerWorld:
     def respawn(self, owner):
         candidates = [(self.rng.uniform(80, 3120), self.rng.uniform(80, 2120)) for _ in range(48)]
         candidates.extend((x, y) for y in (100, 1100, 2100) for x in (100, 1600, 3100))
+        if self.safe_zone:
+            state = self.safe_zone.at(self.elapsed)
+            radius = max(20, min(state['radius'] - 64, 1000))
+            candidates = []
+            for _ in range(64):
+                angle, distance = self.rng.random() * math.tau, math.sqrt(self.rng.random()) * radius
+                candidates.append((clamp(state['x'] + math.cos(angle) * distance, 80, 3120),
+                                   clamp(state['y'] + math.sin(angle) * distance, 80, 2120)))
         cells = self.all_cells()
         def clearance(point):
             return min((math.hypot(point[0] - c["x"], point[1] - c["y"]) - c["radius"] - 18 for c in cells), default=9999)
@@ -440,8 +478,9 @@ class MultiplayerWorld:
         cell = ball(self.new_id("cell"), owner, {"x": x, "y": y})
         self.cells[owner["ownerId"]] = [cell]
         self.stop_input(owner)
-        owner.update(protectedUntil=self.elapsed + 3, sprintRemaining=0, sprintCooldown=0, splitCooldown=0, sporeCooldown=0)
+        owner.update(protectedUntil=self.elapsed + 3, sprintRemaining=0, sprintCooldown=0, splitCooldown=0, sporeCooldown=0, zoneExposure=0)
         self.emit("respawn", owner, lives=owner["lives"], x=x, y=y, color=owner["color"])
+        owner['stats'].sample(self.elapsed, [cell], True)
 
     def disconnect(self, owner_id):
         owner = self.players.get(owner_id)
@@ -450,6 +489,7 @@ class MultiplayerWorld:
         owner["connected"] = False
         self.stop_input(owner)
         if not self.finished:
+            owner['stats'].death(self.elapsed, 'departed')
             owner["lives"] = 0
             self.cells[owner_id] = []
             self.emit("departed", owner, name=owner["name"])
@@ -457,6 +497,8 @@ class MultiplayerWorld:
 
     def finish(self, reason):
         if not self.finished:
+            for owner_id, owner in self.players.items():
+                owner['stats'].sample(self.elapsed, self.cells[owner_id], True)
             self.finished, self.reason = True, reason
             self.emit("gameover")
 
@@ -473,6 +515,14 @@ class MultiplayerWorld:
         self.hotspots["zones"] = zones
 
     def food_position(self, rich=None):
+        if self.safe_zone:
+            state = self.safe_zone.at(self.elapsed)
+            # 新补给随当前安全区集中；已有食物不凭空消失，方便看清圈外的风险。
+            if state['radius'] < 1200:
+                angle = self.rng.random() * math.tau
+                distance = math.sqrt(self.rng.random()) * max(20, state['radius'] - 30)
+                return {"x": clamp(state['x'] + math.cos(angle) * distance, 20, 3180),
+                        "y": clamp(state['y'] + math.sin(angle) * distance, 20, 2180), "hotspotId": None}
         if rich is None:
             rich = self.rng.random() < .36
         if rich:
@@ -502,7 +552,7 @@ class MultiplayerWorld:
                             (2940, 1900), (520, 1100), (2680, 1100), (900, 520), (2300, 1680)][index]
                 point = {"id": f"spike-{index}", "x": fallback[0], "y": fallback[1],
                          "radius": SPIKE_RADIUS, "color": "#72c98e"}
-            spikes.append(point)
+            spikes.append({**point, "charge": 0})
         return spikes
 
     def create_food(self):
@@ -557,17 +607,24 @@ class MultiplayerWorld:
         for owner_id, owner in self.players.items():
             sprint, splitting, spore = self.ability_snapshot(owner_id)
             players.append({**{key: owner[key] for key in ("ownerId", "name", "color", "team", "score", "eatenBalls", "peakMass", "killer", "isBot")},
-                            "sprint": sprint, "split": splitting, "spore": spore, "ack": owner["lastSeq"]})
+                            "sprint": sprint, "split": splitting, "spore": spore, "ack": owner["appliedSeq"],
+                            "regrouping": owner["input"].get("regroup", False) and len(self.cells[owner_id]) > 1,
+                            "stats": owner["stats"].snapshot(self.finished), "zoneExposure": owner['zoneExposure'],
+                            "teamAction": owner.get('teamAction', ''),
+                            "pingCooldown": self.signals.remaining(owner_id, self.elapsed)})
         standings = self.standings()
-        # 物理状态留在服务端。快照只包含绘制需要的字段，并拍成独立副本供发送线程读取。
+        # 合成速度供对手插值；独立运动分量供本人重放移动。快照均为独立副本。
         cells = [{key: cell[key] for key in ("id", "ownerId", "team", "name", "color", "alive")}
                  | {key: round(cell[key], 3) for key in ("x", "y", "mass", "radius", "speed", "mergeRemaining")}
-                 | {"vx": round(cell["vx"] + cell["impulseX"], 3), "vy": round(cell["vy"] + cell["impulseY"], 3)}
+                 | {"vx": round(cell["vx"] + cell["impulseX"], 3), "vy": round(cell["vy"] + cell["impulseY"], 3),
+                    "motion": {key: round(cell[key], 3) for key in ("vx", "vy", "impulseX", "impulseY")}}
                  for cell in self.all_cells()]
         return {"tick": self.tick, "elapsed": self.elapsed, "duration": self.duration, "bounds": BOUNDS,
                 "rules": self.rules.snapshot(), "teams": self.team_standings(),
+                "safeZone": self.safe_zone.at(self.elapsed) if self.safe_zone else None,
+                "pings": self.signals.snapshot(self.elapsed),
                 "cells": cells, "foods": self.foods, "spores": [dict(spore) for spore in self.spores],
-                "spikes": self.spikes, "hotspots": dict(self.hotspots), "players": players,
+                "spikes": [dict(spike) for spike in self.spikes], "hotspots": dict(self.hotspots), "players": players,
                 "standings": standings, "finished": self.finished, "reason": self.reason,
                 "protectionByOwner": {key: max(0, p["protectedUntil"] - self.elapsed) for key, p in self.players.items()},
                 "events": list(self.events)}
