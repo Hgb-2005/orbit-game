@@ -1,3 +1,4 @@
+import { readPracticeProgress, rememberPractice, practiceCheckpoints, nextPractice, roundAdvice } from './presentation/coach.js';
 import { CONFIG } from "./config.js";
 import { nearestDanger } from "./presentation/combat-feedback.js";
 import { PRACTICE_DRILLS } from "./core/practice.js";
@@ -11,6 +12,7 @@ export function formatTime(seconds) {
 }
 
 const number = value => Math.round(value).toLocaleString("zh-CN");
+const practiceTime = seconds => Number.isFinite(seconds) ? `${seconds.toFixed(1)} 秒` : "—";
 const $ = id => document.getElementById(id);
 
 /** DOM 显示与 Canvas 绘制分开，更新 HUD 不会触碰游戏规则。 */
@@ -27,6 +29,8 @@ export class GameUI {
     this.feedbackPhase = "normal";
     this.mode = "classic";
     this.practiceDrill = "split";
+    this.practiceProgress = readPracticeProgress();
+    this.practiceSavedAt = null;
     this.onModeChange = () => {};
     this.labelObstacles = [...document.querySelectorAll(".arena-corner, .canvas-stage, .hotspot-status, #danger-hint, #leaderboard, #protection-hint, #ability-panel, #milestone-banner, #touch-joystick")];
     $("leaderboard").open = !window.matchMedia("(max-width: 760px)").matches;
@@ -42,7 +46,7 @@ export class GameUI {
   }
 
   bind({ start, pause, restart, theme, focus, split, spore, sporeHold = () => {}, regroupHold = () => {},
-    practiceReset, practiceNext, practiceExit, quality, music, volume, effects }) {
+    practiceReset, practiceNext, practiceExit, practiceStart, quality, music, volume, effects }) {
     $("quality-select").addEventListener("change", event => quality(event.target.value));
     $("game-mode").addEventListener("change", event => {
       this.mode = ["survival", "multiplayer", "practice"].includes(event.target.value) ? event.target.value : "classic";
@@ -58,6 +62,11 @@ export class GameUI {
     $("focus-button").addEventListener("click", focus);
     $("split-button").addEventListener("click", split);
     this.releaseRegroup = bindHoldButton($("regroup-button"), regroupHold);
+    $("guided-practice").addEventListener("click", () => practiceStart(nextPractice(this.practiceProgress)));
+    $("recap-practice").addEventListener("click", () => {
+      const advice = roundAdvice(this.lastSnapshot ?? {});
+      if (advice) practiceStart(advice.drill);
+    });
     $("practice-reset").addEventListener("click", practiceReset);
     $("practice-next").addEventListener("click", practiceNext);
     $("practice-exit").addEventListener("click", practiceExit);
@@ -366,7 +375,16 @@ export class GameUI {
       const record = snapshot.network.customRecord;
       $("round-record-note").textContent = record ? `自定义局 · 相同规则最高分 ${number(record.high_score)}${record.is_new_record ? " · 新纪录" : ""}` : "自定义局 · 成绩单独保存中，标准最高分保持原纪录";
     }
+    $("practice-overview").hidden = state !== "ready" || Boolean(snapshot.network);
+    $("practice-overview-copy").textContent = `三项真实操作训练 · 已完成 ${Object.keys(this.practiceProgress).length} / 3 · 进度保存在当前浏览器`;
+    $("guided-practice").textContent = Object.keys(this.practiceProgress).length === 3 ? "再练一遍" : Object.keys(this.practiceProgress).length ? "继续新手训练" : "先练三招，再上球场";
     if (state === "gameover") {
+      const advice = roundAdvice(snapshot);
+      $("round-advice").hidden = !advice;
+      if (advice) {
+        $("round-advice-copy").textContent = advice.text;
+        $("recap-practice").textContent = advice.title + " →";
+      }
       $('recap-timeline').replaceChildren(telemetryView(snapshot.stats ?? {}));
       $("recap-items").replaceChildren(...recapItems(snapshot).map(item => {
         const row = document.createElement("div");
@@ -454,7 +472,9 @@ export class GameUI {
   }
 
   renderPracticeSelection() {
-    $("practice-description").textContent = PRACTICE_DRILLS.find(drill => drill.id === this.practiceDrill)?.description ?? "";
+    const description = PRACTICE_DRILLS.find(drill => drill.id === this.practiceDrill)?.description ?? "";
+    const best = this.practiceProgress[this.practiceDrill];
+    $("practice-description").textContent = description + (Number.isFinite(best) ? ` 已完成 · 最佳用时 ${practiceTime(best)}` : "");
   }
 
   renderPractice(snapshot) {
@@ -468,8 +488,25 @@ export class GameUI {
     const progress = drill.id === "split" ? `分裂 ${stats.splits} 次 · 吞靶 ${stats.cellsEaten} 球` :
       drill.id === "feed" ? `已喂 ${stats.spikesFed} 颗 · 当前蓄能 ${snapshot.spikes.find(spike => !spike.projectile)?.charge ?? 0} / 5` :
       `${snapshot.playerCells.length} 个分身 · ${snapshot.split.mergeRemaining > 0 ? `合体冷却 ${snapshot.split.mergeRemaining.toFixed(1)}s` : "可以合体"}`;
-    $("practice-progress").textContent = drill.complete ? `已完成 · 用时 ${formatTime(drill.completedAt)}` : `${drill.goal}｜${progress}`;
+    $("practice-progress").textContent = drill.complete ? `已完成 · 用时 ${practiceTime(drill.completedAt)}` : `${drill.goal}｜${progress}`;
     $("practice-next").disabled = !drill.complete;
+    const checkpoints = practiceCheckpoints(snapshot), signature = JSON.stringify(checkpoints);
+    if (this.checkpointSignature !== signature) {
+      this.checkpointSignature = signature;
+      $("practice-checkpoints").replaceChildren(...checkpoints.map(step => {
+        const item = document.createElement('li'); item.textContent = step.text;
+        item.dataset.done = String(step.done);
+        if (step.current) item.setAttribute('aria-current', 'step');
+        return item;
+      }));
+    }
+    if (!drill.complete) this.practiceSavedAt = null;
+    if (drill.complete && this.practiceSavedAt !== `${drill.id}:${drill.completedAt}`) {
+      this.practiceSavedAt = `${drill.id}:${drill.completedAt}`;
+      const saved = rememberPractice(this.practiceProgress, drill);
+      $("practice-save-note").textContent = saved ? `训练进度已保存 · ${Object.keys(this.practiceProgress).length} / 3 项完成 · 最佳 ${practiceTime(this.practiceProgress[drill.id])}` : '本次已完成；浏览器保存不可用，刷新后进度可能丢失。';
+    }
+    $("practice-save-note").hidden = !drill.complete;
   }
 
   toast(message) {

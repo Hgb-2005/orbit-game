@@ -9,8 +9,8 @@
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0160">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0160">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0180">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0180">
     </script>
   </head>
   <body>
@@ -182,6 +182,8 @@
                 <strong id="practice-title">分裂吞噬</strong>
                 <span id="practice-instruction"></span>
                 <span id="practice-progress" role="status"></span>
+                <ol id="practice-checkpoints" class="practice-checkpoints" aria-label="练习步骤"></ol>
+                <span id="practice-save-note" role="status" hidden></span>
               </div>
               <div class="practice-actions">
                 <button id="practice-reset" class="room-button" type="button">重练</button>
@@ -251,7 +253,7 @@
               </div>
               <div id="game-overlay" class="game-overlay">
                 <div class="overlay-card">
-                  <div class="release-badge">V0.16.0 <span>移动预测 · 平滑校正 · 手动选队</span></div>
+                  <div class="release-badge">V0.18.0 <span>好友分享 · 循序训练 · 复盘建议</span></div>
                   <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
                     <span>
                     </span>
@@ -289,6 +291,10 @@
                       </select>
                       <p id="practice-description"></p>
                     </div>
+                  </div>
+                  <div id="practice-overview" class="practice-overview">
+                    <p id="practice-overview-copy"></p>
+                    <button id="guided-practice" class="room-button" type="button">先练三招，再上球场</button>
                   </div>
                   <div id="multiplayer-panel" class="multiplayer-panel" hidden>
                     <p id="network-error" class="network-error" role="alert"></p>
@@ -334,6 +340,7 @@
                       <p id="room-progress" class="room-progress" aria-live="polite"></p>
                       <p id="room-waiting" class="room-note" role="status"></p>
                       <div class="room-invitation">
+                        <button id="share-room-link" class="text-button" type="button" hidden>分享给朋友 ↗</button>
                         <button id="copy-room-link" class="text-button" type="button">复制邀请链接</button>
                         <span id="room-copy-status" role="status"></span>
                         <label for="room-invite" class="screen-reader-only">邀请链接，可选中复制</label>
@@ -365,6 +372,7 @@
                     <summary>本局复盘</summary>
                     <dl id="recap-items"></dl>
                     <div id="recap-timeline"></div>
+                    <div id="round-advice" class="round-advice" hidden><p id="round-advice-copy"></p><button id="recap-practice" class="room-button" type="button"></button></div>
                   </details>
                   <button id="start-button" class="primary-button" type="button">
                     <span id="start-label">

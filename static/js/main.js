@@ -9,7 +9,7 @@ import { BackgroundMusic } from "./audio/music.js";
 import { SoundEffects } from "./audio/effects.js";
 import { VisualFeedback } from "./presentation/feedback.js";
 import { RemoteSession } from "./network/remote-session.js";
-import { LobbyUI } from "./network/lobby-ui.js";
+import { LobbyUI } from "./network/lobby-ui.js?v=0180";
 import { TacticsUI } from './presentation/tactics-ui.js';
 import { HistoryService } from './services/history.js';
 import { HistoryUI } from './presentation/history-ui.js';
@@ -195,6 +195,14 @@ ui.bind({
   spore: () => { input.requestSpore(); canvas.focus({ preventScroll: true }); },
   sporeHold: held => input.setSporeHeld(held),
   regroupHold: held => input.setRegroupHeld(held),
+  practiceStart: drill => {
+    ui.mode = "practice";
+    ui.practiceDrill = drill;
+    document.getElementById("game-mode").value = "practice";
+    document.getElementById("practice-drill").value = drill;
+    ui.onModeChange("practice");
+    start(true);
+  },
   practiceReset: restart,
   practiceNext: () => {
     const practice = session.getSnapshot().practice;

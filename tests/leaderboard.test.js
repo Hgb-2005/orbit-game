@@ -51,6 +51,8 @@ test("实时排行跟随食物成长、冲刺消耗和分身损失，分数保�
   world.bots = [cell("rival", 140)];
   world.bots[0].x = 500;
   world.foods = [];
+  // 排行测试只比较质量变化，移除随机地图中可能让对手扎刺的障碍。
+  world.spikes = [];
   world.refillTimer = world.respawnTimer = world.difficultyTimer = -1e6;
   growBall(world.player, 108);
   world.score = 108;

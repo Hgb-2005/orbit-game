@@ -1,5 +1,6 @@
 const $ = id => document.getElementById(id);
 import { ROOM_DEFAULTS, ROOM_PRESETS, RULE_FIELDS, MODE_NAMES, describeRules, presetName } from "./room-rules.js";
+import { shareRoomInvite } from "./invite-share.js";
 
 /** 房间显示与模拟分开；昵称一律用 textContent，不解释为 HTML。 */
 export class LobbyUI {
@@ -68,6 +69,25 @@ export class LobbyUI {
         $("room-copy-status").textContent = "请选中下方链接复制";
         $("room-invite").focus(); $("room-invite").select();
       }
+    });
+    $("share-room-link").hidden = typeof navigator.share !== "function";
+    $("share-room-link").addEventListener("click", async () => {
+      const room = this.getSession()?.room;
+      if (!room?.code) return;
+      const url = new URL(this.inviteOrigin);
+      url.search = new URLSearchParams({ room: room.code }).toString();
+      const result = await shareRoomInvite({
+        url: url.href,
+        share: navigator.share?.bind(navigator),
+        copy: navigator.clipboard?.writeText?.bind(navigator.clipboard),
+      });
+      const status = $("room-copy-status");
+      if (result === "shared") status.textContent = "已打开系统分享面板";
+      else if (result === "copied") status.textContent = "分享不可用，邀请链接已复制";
+      else if (result === "manual") {
+        status.textContent = "请选中下方邀请链接复制";
+        $("room-invite").focus(); $("room-invite").select();
+      } else if (result === "unavailable") status.textContent = "房间信息暂不可用";
     });
   }
 
