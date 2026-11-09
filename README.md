@@ -2,6 +2,17 @@
 
 一个使用 Flask、原生 JavaScript ES Modules、Canvas 2D 和 SQLite 的吞噬小游戏，支持单机与局域网真人 + 人机联机。无图片素材、无前端打包步骤、无 npm 运行时依赖。
 
+## v0.19.0：阶段 0 基线加固
+
+- **吞噬判定统一**：只有捕食者真实半径严格大于猎物半径的 **1.18 倍**，且两球圆心距严格小于两者半径差时，才会吞噬。单机、联机、AI、危险提示和标签说明使用同一体型优势规则。
+- **原子碰撞结算**：同一帧先收集吞噬候选，再统一提交。同一猎物只接受质量最高且 ID 稳定的捕食者；已被吞噬的球不能继续得分、击杀或吞掉第三颗球，结算质量平滑写入存活球。
+- **边界与分身**：所有球体位置修正统一经过 clamp 或 bounce 策略；clamp 清除向外速度，bounce 反转速度并应用恢复系数。分身支持鼠标右键、`Q`、`W` 和手机按钮，仍遵守 8 球上限、冷却、合体等待与质量预算。
+- **三档人机**：休闲档只觅食和漫游；标准档会主动追逃；挑战档增加目标预判、分裂追击和绕刺。人机会短暂记住目标，避免逐帧抖动，但目标失效后会重新选择。
+- **性能与排行**：性能面板显示 FPS、模拟耗时、碰撞耗时、球数、AI 数和存活人数。排行榜按控制者聚合存活分身，普通模式明确区分存活数与当前参赛数，生存模式保留固定名单总数。
+- **显示平滑**：绘制半径独立插值，吞食成长时外观平滑，碰撞、吞噬和边界仍使用真实半径，不会因画面平滑产生判定偏差。
+
+阶段 0 已完成，阶段 1 尚未开始。页面显示 **V0.19.0**；旧标签页刷新后即可使用。
+
 ## v0.18.0：一键分享好友房间
 
 - 支持的设备可直接打开系统分享面板，把当前房间邀请链接发送到聊天应用；不支持分享或分享失败时，自动尝试复制链接，最后保留手动选择链接的方式。
@@ -251,10 +262,10 @@ python3 -m venv .venv
 
 - 点击“开始游戏”，小球会朝鼠标方向移动；鼠标越靠近球心，速度越慢。也支持方向键、WASD、触屏拖动及左侧虚拟摇杆，右侧技能可同时操作。
 - 吃食物增加质量和分数；面积随质量增长，速度随质量增加而降低。
-- 质量至少为对方的 **1.28 倍**，且对方球心进入 `大球半径 - 小球半径 × 0.35` 的范围时，才会吞噬。
+- 捕食者半径必须严格大于猎物半径的 **1.18 倍**，并且两球圆心距严格小于 `捕食者半径 - 猎物半径`，才会吞噬；体型优势不足时两球直接穿过。
 - 吃掉 AI 分身获得它当前质量四舍五入后的分数；全部玩家分身被更大的 AI 吞噬才会结束。开局前 3 秒，所有玩家分身和 AI 之间都不会发生吞噬。
 - `Space` / `Esc` 暂停或继续，`R` 重开。切走页面、窗口失去焦点时自动暂停。
-- 鼠标右键或 `Q` 分身，10 秒后自动靠拢合体；鼠标左键或 `E` 吐孢子，撞上绿色刺球会扎刺分裂；`F` 切换专注模式。暂停会冻结技能与合体计时；重开会重置本局技能、阶段和难度。
+- 鼠标右键、`Q` 或 `W` 分身，10 秒后自动靠拢合体；鼠标左键或 `E` 吐孢子，撞上绿色刺球会扎刺分裂；`F` 切换专注模式。暂停会冻结技能与合体计时；重开会重置本局技能、阶段和难度。
 - 右上角可以切换深色与浅色模式；主题会保存在浏览器中。
 - 右上角音符按钮控制背景音乐，旁边滑块调音量；音乐随暂停和结束停止，重开保留开关与音量选择。
 - 右上角喇叭按钮独立控制轻音效；滑块只调背景音乐音量。到金色 A/B 圈里可更密集地找到食物，换位倒计时位于画布左上角。
@@ -295,6 +306,7 @@ static/
     core/hotspots.js            富集区位置、换位时钟、区域食物采样
     core/leaderboard.js         按控制者聚合存活质量与实时排名
     core/world.js               世界状态、碰撞、刷新、结束判定
+    core/spatial-grid.js        单机均匀空间网格候选查询
     core/survival.js            生存局名单、生命与战绩、保护时钟、结算排序、安全复活位置
     session.js                  本地会话及暂停/重启生命周期
     network/remote-session.js   WebSocket 输入、权威快照、位置平滑与观战适配
@@ -306,6 +318,7 @@ static/
     renderer.js                 Canvas 绘制、小地图、粒子反馈
     presentation/labels.js      屏幕标签排布、优先级、远处 AI 标签简化
     presentation/feedback.js    技能就绪变化、换位预告与高亮的表现层时钟
+    presentation/radius-smoothing.js  只平滑绘制半径，不改真实碰撞半径
     audio/music.js              合成循环配乐、音量记忆、手势解锁、暂停与音符释放
     audio/effects.js            吃食物、吞噬、分裂、合体、吐孢子、扎刺等轻音效
     services/scores.js          记录 API、暂存、断线重试
@@ -336,7 +349,7 @@ SQLite 的 `records` 表保存一个最高分，使用 SQL 条件更新，较低
 
 ## 修改玩法与继续扩展
 
-优先修改 `static/js/config.js`：`food.count` 是食物数量，`bots.count` 是 AI 控制者数量，`player.baseSpeed` 是基础速度，`rules.eatMassRatio` 是吞噬质量比例。`split` 控制分身上限、分裂最低质量、技能冷却、合体等待、弹射速度和 AI 分裂限制；`spore` 控制孢子质量、最低质量、冷却、飞行速度和寿命；`spikes` 控制刺球数量、半径、扎刺损耗与保护时间；`milestones` 定义前几级阶段目标；`difficulty` 控制刷新间隔、出生缓冲区和 AI 规模上限；`hotspots` 控制富集区数量、半径、换位间隔和食物比例；`survival` 控制时限、初始命数及复活保护时长；`effects` 控制音效音量、最大声部数和触发间隔。AI 类型的体型比例、配额和追逐距离集中在 `core/progression.js` 的 `BOT_ROLES`。
+优先修改 `static/js/config.js`：`food.count` 是食物数量，`bots.count` 是 AI 控制者数量，`player.baseSpeed` 是基础速度；`rules.eatRadiusRatio` 是吞噬所需的最小半径倍数，`rules.boundaryPolicy` 可选 `clamp` 或 `bounce`，`rules.boundaryRestitution` 控制弹性。`split` 控制分身上限、分裂最低质量、技能冷却、合体等待、弹射速度和 AI 分裂限制；`spore` 控制孢子质量、最低质量、冷却、飞行速度和寿命；`spikes` 控制刺球数量、半径、扎刺损耗与保护时间；`milestones` 定义前几级阶段目标；`difficulty` 控制刷新间隔、出生缓冲区和 AI 规模上限；`hotspots` 控制富集区数量、半径、换位间隔和食物比例；`survival` 控制时限、初始命数及复活保护时长；`effects` 控制音效音量、最大声部数和触发间隔。AI 类型的体型比例、配额和追逐距离集中在 `core/progression.js` 的 `BOT_ROLES`。
 
 游戏规则在 `core/` 中，不依赖 DOM 或 Canvas；`LocalSession` 对外提供 `start(viewSize, mode = "classic")`、`pause()`、`resume()`、`step(dt, input)` 和 `getSnapshot()`。输入格式是 `{ x, y, split, spore, target, view }`：前两项为方向向量，`split` / `spore` 表示本帧是否按下技能键，`target` 是鼠标目标的世界坐标 `{ x, y }`（键盘输入时为空），`view` 是世界坐标下的可见矩形 `{ left, top, right, bottom }`，用于公平出生。
 
@@ -348,11 +361,11 @@ SQLite 的 `records` 表保存一个最高分，使用 SQL 条件更新，较低
 
 `presentation/` 不修改实体或世界状态。`feedback.js` 从会话快照读取真实技能可用状态、富集区周期和游戏时间，分别供 UI 与绘制层使用；`config.js` 的 `feedback` 调整三类提示时长，`labels` 调整远处 AI 简化阈值。`labels.js` 接收屏幕坐标、文字测量尺寸、球体和 HUD 的几何范围，返回标签位置和引线起点，换用远程会话后也可继续复用。
 
-快照包含 `leaderboard: { entries, player, total }` 和 `hotspots: { zones, remaining, duration, cycle }`。排行的 `player` 在前五名之外仍存在；每行包含 `ownerId`、`mass`、`cells` 和 `rank`。富集区及带有 `hotspotId` 的食物属于模拟状态，换位通过 `hotspots` 事件通知 UI。联机由权威服务器生成区域、采样食物、决定换位时间和排名，客户端只读取快照；生存局排名会保留已出局者。
+快照包含 `leaderboard: { entries, player, total, alive }` 和 `hotspots: { zones, remaining, duration, cycle }`。排行的 `player` 在前五名之外仍存在；每行包含 `ownerId`、`mass`、`cells` 和 `rank`。普通模式按当前存活控制者统计；生存模式保留固定名单总数并额外报告存活数。富集区及带有 `hotspotId` 的食物属于模拟状态，换位通过 `hotspots` 事件通知 UI。联机由权威服务器生成区域、采样食物、决定换位时间和排名，客户端只读取快照。
 
 单机生存模式通过 `start(viewSize, "survival")` 启动，快照包含 `mode`、`survival` 和 `result`。`survival` 包含 `remaining`、`duration`、`active`、`total`、玩家战绩、全名单排名及 `protectionByOwner`。`core/survival.js` 管理按控制者持久化的命数、击败数、死亡数和保护截止时间；`World` 在最后分身被吃时记录一次死亡，在本帧吞噬结束后才创建新球。`life`、`respawn`、`eliminated` 和 `gameover` 是独立规则事件，表现层读取事件后重定位镜头与显示提示。联机的这些规则位于 `server/game/world.py`，由服务器负责所有生命变更、复活位置与按 `RoomRules.duration` 封盘；单机生存仍为 300 秒。
 
-`RemoteSession` 复用 Canvas、镜头、HUD、音频和标签布局，支持自动重连握手与 10 秒恢复凭证；`PositionBuffer` 仅平滑绘制坐标，不修改权威质量或碰撞。联机规则位于 `server/game/`，单机规则仍位于 `static/js/core/`；两端都用 `spatial.py` / `spatial-grid.js` 做候选筛选，修改共同玩法参数时应同步两端，并运行两套规则测试。
+`RemoteSession` 复用 Canvas、镜头、HUD、音频和标签布局，支持自动重连握手与 10 秒恢复凭证；`PositionBuffer` 仅平滑绘制坐标，不修改权威质量或碰撞。联机规则位于 `server/game/`，单机规则仍位于 `static/js/core/`；两端都用 **Uniform Spatial Grid（均匀空间网格）** 做邻近候选筛选，不做全局双重循环碰撞。修改共同玩法参数时应同步两端，并运行两套规则测试。
 
 WebSocket 地址为 `/ws/arena`，使用浏览器原生 WebSocket。连接后服务器发送 `welcome` 分配玩家 ID 和 `resumeToken`；普通断开后客户端使用旧 token 发送 `resume`，服务端在 10 秒内把新连接绑定回原玩家。客户端用 `create` / `join`、`ready`、`configure`、`start`、`input`、`stop`、`leave`、`rematch`、`resume` 操作房间，`ping` / `pong` 测量延迟。`create` 与 `configure` 的规则为 `rules: { mode: "survival" | "teams", duration: 180 | 300 | 480 }`，配置权限与参数由服务器验证。`input` 仅包含 `roundId`、递增 `seq`、方向 `x/y`、鼠标目标 `target`、`split/spore`，身份由连接决定。每局分配新的 `roundId`，防止上局输入串入新局。
 

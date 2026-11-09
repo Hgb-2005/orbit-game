@@ -1,4 +1,5 @@
 import { CONFIG } from "../config.js";
+import { hasEatSizeAdvantage } from "../core/entities.js";
 
 /** 按单个分身评估威胁，球群总质量不能替小分身提供保护。 */
 export function nearestDanger(snapshot) {
@@ -9,7 +10,7 @@ export function nearestDanger(snapshot) {
     if (!cell.alive || protectedOwners[cell.ownerId] > 0) continue;
     for (const enemy of snapshot.bots) {
       if (!enemy.alive || enemy.isAlly || protectedOwners[enemy.ownerId] > 0 ||
-          enemy.mass < cell.mass * CONFIG.rules.eatMassRatio) continue;
+          !hasEatSizeAdvantage(enemy, cell)) continue;
       const gap = Math.hypot(enemy.x - cell.x, enemy.y - cell.y) - enemy.radius - cell.radius;
       if (gap > 240 || nearest && nearest.gap <= gap) continue;
       nearest = { cell, enemy, gap };

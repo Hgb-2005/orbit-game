@@ -40,16 +40,30 @@ export function splitProjection(snapshot, aim, seconds = .35) {
 
 /** 小窗口的实际帧间隔和 Canvas 绘制耗时；跳过暂停和后台长帧，按需计算 P95。 */
 export class FrameMetrics {
-  constructor() { this.frames = []; this.costs = []; }
-  observe(frameMs, drawMs, active) {
+  constructor() {
+    this.frames = [];
+    this.costs = [];
+    this.details = {};
+  }
+
+  observe(frameMs, drawMs, active, details = {}) {
     if (!active || !Number.isFinite(frameMs) || frameMs <= 0 || frameMs > 250 || !Number.isFinite(drawMs) || drawMs < 0) return;
     this.frames.push(frameMs); this.costs.push(drawMs);
     if (this.frames.length > 120) { this.frames.shift(); this.costs.shift(); }
+    this.details = {
+      cellCount: Number(details.cellCount) || 0,
+      aiCount: Number(details.aiCount) || 0,
+      aliveCount: Number(details.aliveCount) || 0,
+      simulationMs: Number(details.simulationMs) || 0,
+      collisionMs: Number(details.collisionMs) || 0,
+    };
   }
+
   snapshot() {
     if (!this.frames.length) return null;
     const sorted = [...this.costs].sort((a, b) => a - b);
     return { fps: 1000 / (this.frames.reduce((a, b) => a + b, 0) / this.frames.length),
-      drawP95: sorted[Math.max(0, Math.ceil(sorted.length * .95) - 1)], samples: sorted.length };
+      drawP95: sorted[Math.max(0, Math.ceil(sorted.length * .95) - 1)], samples: sorted.length,
+      ...this.details };
   }
 }

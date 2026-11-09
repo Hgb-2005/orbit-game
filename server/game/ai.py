@@ -1,11 +1,12 @@
 """人机只生成普通输入；难度改变决策和反应时间，不改变速度或吞噬规则。"""
 import math
+from .rules import has_eat_advantage
 from .teamplay import cooperate
 
 PROFILES = {
-    "casual": {"reaction": .5, "chase": 300, "margin": 1.35, "maxCells": 1, "splitRest": 18},
-    "standard": {"reaction": .28, "chase": 500, "margin": 1.14, "maxCells": 2, "splitRest": 14},
-    "challenge": {"reaction": .16, "chase": 760, "margin": 1.08, "maxCells": 4, "splitRest": 9},
+    "casual": {"reaction": .5, "chase": 300, "margin": 1.35, "maxCells": 1, "splitRest": 18, "splitChase": False},
+    "standard": {"reaction": .28, "chase": 500, "margin": 1.14, "maxCells": 2, "splitRest": 14, "splitChase": False},
+    "challenge": {"reaction": .16, "chase": 760, "margin": 1.08, "maxCells": 4, "splitRest": 9, "splitChase": True},
 }
 
 
@@ -52,14 +53,34 @@ def decide(owner, cells, world):
     enemies = [cell for cell in world.all_cells() if cell["ownerId"] != owner["ownerId"]
                and not world.allies(owner, world.players[cell["ownerId"]])
                and max(owner["protectedUntil"], world.players[cell["ownerId"]]["protectedUntil"]) <= world.elapsed]
-    # 威胁按每个分身计算，不能让大分身的质量掩盖小分身正在被追击。
-    threats = [(math.hypot(enemy["x"] - cell["x"], enemy["y"] - cell["y"]) - enemy["radius"] - cell["radius"], cell, enemy)
-               for cell in cells for enemy in enemies if enemy["mass"] >= cell["mass"] * 1.28]
-    closest = min(threats, key=lambda item: item[0], default=None)
-    threat = closest if closest and closest[0] < 220 else None
-    prey = min((enemy for enemy in enemies if bot["mass"] >= enemy["mass"] * 1.28
-                and math.hypot(enemy["x"] - bot["x"], enemy["y"] - bot["y"]) < bot["radius"] + enemy["radius"] + profile["chase"]),
-               key=lambda enemy: math.hypot(enemy["x"] - bot["x"], enemy["y"] - bot["y"]), default=None)
+    # 休闲档只觅食和漫游，不读取敌人信息；更高难度才进入追逃决策。
+    threat = None
+    prey = None
+    if world.rules.botDifficulty != "casual":
+        # 威胁按每个分身计算，不能让大分身掩盖小分身正在被追击。
+        threats = [(math.hypot(enemy["x"] - cell["x"], enemy["y"] - cell["y"])
+                    - enemy["radius"] - cell["radius"], cell, enemy)
+                   for cell in cells for enemy in enemies if has_eat_advantage(enemy, cell)]
+        closest = min(threats, key=lambda item: item[0], default=None)
+        threat = closest if closest and closest[0] < 220 else None
+        prey = min((enemy for enemy in enemies if has_eat_advantage(bot, enemy)
+                    and math.hypot(enemy["x"] - bot["x"], enemy["y"] - bot["y"])
+                    < bot["radius"] + enemy["radius"] + profile["chase"]),
+                   key=lambda enemy: math.hypot(enemy["x"] - bot["x"], enemy["y"] - bot["y"]),
+                   default=None)
+
+        remembered = world.players[owner["ownerId"]].get("botTargetId")
+        remembered_until = world.players[owner["ownerId"]].get("botTargetUntil", 0)
+        remembered_kind = world.players[owner["ownerId"]].get("botTargetKind")
+        if remembered and remembered_until > world.elapsed:
+            target = next((enemy for enemy in enemies if enemy["id"] == remembered), None)
+            if remembered_kind == "threat" and target and any(has_eat_advantage(target, cell) for cell in cells):
+                threatened = min((cell for cell in cells if has_eat_advantage(target, cell)),
+                                 key=lambda cell: math.hypot(target["x"] - cell["x"], target["y"] - cell["y"]))
+                threat = (math.hypot(target["x"] - threatened["x"], target["y"] - threatened["y"])
+                          - target["radius"] - threatened["radius"], threatened, target)
+            elif remembered_kind == "prey" and target and has_eat_advantage(bot, target):
+                prey = target
     total = sum(cell["mass"] for cell in cells)
     center = {axis: sum(cell[axis] * cell["mass"] for cell in cells) / total for axis in ("x", "y")}
     spread = max(math.hypot(cell["x"] - center["x"], cell["y"] - center["y"]) for cell in cells)
@@ -77,21 +98,45 @@ def decide(owner, cells, world):
     if threat:
         _, cell, enemy = threat
         direction = unit(cell["x"] - enemy["x"], cell["y"] - enemy["y"])
+        remember_target(owner, "threat", enemy["id"], world.elapsed)
     elif prey:
-        direction = unit(prey["x"] - bot["x"], prey["y"] - bot["y"])
-        split = (len(cells) * 2 <= profile["maxCells"] and owner.get("botSkillRemaining", 0) <= 0
-                 and bot["mass"] >= 72 and bot["mass"] / 2 >= prey["mass"] * 1.28 * profile["margin"]
+        dx, dy = prey["x"] - bot["x"], prey["y"] - bot["y"]
+        if world.rules.botDifficulty == "challenge":
+            dx += prey.get("vx", 0) * .18
+            dy += prey.get("vy", 0) * .18
+        direction = unit(dx, dy)
+        split_radius = math.sqrt(bot["mass"] / 2) * (bot["radius"] / math.sqrt(bot["mass"]))
+        split = (profile["splitChase"] and len(cells) * 2 <= profile["maxCells"]
+                 and owner.get("botSkillRemaining", 0) <= 0 and bot["mass"] >= 72
+                 and split_radius > prey["radius"] * profile["margin"]
                  and bot["radius"] + prey["radius"] + 10 < math.hypot(prey["x"] - bot["x"], prey["y"] - bot["y"]) < bot["radius"] + prey["radius"] + 125
-                 and not any(enemy["mass"] >= min(cell["mass"] for cell in cells) / 2 * 1.28
+                 and not any(math.sqrt(min(cell["mass"] for cell in cells) / 2)
+                             * (enemy["radius"] / math.sqrt(enemy["mass"]))
+                             <= enemy["radius"] * (1 / 1.18)
                              and math.hypot(enemy["x"] - bot["x"], enemy["y"] - bot["y"]) < enemy["radius"] + bot["radius"] + 230 for enemy in enemies)
                  and not any(segment_distance(spike, bot, prey) < bot["radius"] + spike["radius"] + 20 for spike in world.spikes))
+        remember_target(owner, "prey", prey["id"], world.elapsed)
     else:
         food = min(world.foods, key=lambda item: math.hypot(item["x"] - bot["x"], item["y"] - bot["y"]), default=None)
-        direction = unit(food["x"] - bot["x"], food["y"] - bot["y"]) if food else (0, 0)
+        if food:
+            direction = unit(food["x"] - bot["x"], food["y"] - bot["y"])
+            remember_target(owner, "food", food.get("id"), world.elapsed)
+        else:
+            angle = (sum(ord(char) for char in bot["id"]) * .37) + world.elapsed * .17
+            direction = (math.cos(angle), math.sin(angle))
+            remember_target(owner, "wander", None, world.elapsed)
     if direction != (0, 0):
-        dx, dy = avoid_spikes(bot, direction, world.spikes)
+        # 只有挑战档主动绕刺；基础档仍遵守刺球规则，但不会高成本规划。
+        dx, dy = avoid_spikes(bot, direction, world.spikes) if world.rules.botDifficulty == "challenge" else direction
         edge = bot["radius"] + 75
         dx += .9 if bot["x"] < edge else -.9 if bot["x"] > world.bounds_width - edge else 0
         dy += .9 if bot["y"] < edge else -.9 if bot["y"] > world.bounds_height - edge else 0
         direction = unit(dx, dy)
     return {"x": direction[0], "y": direction[1], "target": None, "regroup": bool(regroup), "split": bool(split)}
+
+
+def remember_target(owner, kind, target_id, now):
+    """Bots keep a target briefly, avoiding frame-to-frame oscillation."""
+    owner["botTargetKind"] = kind
+    owner["botTargetId"] = target_id
+    owner["botTargetUntil"] = now + 3

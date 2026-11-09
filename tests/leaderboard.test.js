@@ -14,6 +14,7 @@ test("排行合并同属分身，仅统计存活质量，前五名之外仍提�
   cells[2].alive = false;
   const result = getLeaderboard(cells);
   assert.equal(result.total, 7);
+  assert.equal(result.alive, 7);
   assert.equal(result.entries.length, 5);
   assert.equal(result.entries[0].ownerId, "bot0");
   assert.equal(result.entries[0].mass, 150);
@@ -25,7 +26,7 @@ test("精确质量决定排名，同质量稳定排序，空场和玩家出局�
   const cells = [cell("z", 100.2), cell("b", 100.1), cell("a", 100.1)];
   assert.deepEqual(getLeaderboard(cells).entries.map(entry => entry.ownerId), ["z", "a", "b"]);
   assert.deepEqual(getLeaderboard(cells.reverse()).entries.map(entry => entry.ownerId), ["z", "a", "b"]);
-  assert.deepEqual(getLeaderboard([]), { entries: [], player: null, total: 0 });
+  assert.deepEqual(getLeaderboard([]), { entries: [], player: null, total: 0, alive: 0 });
   assert.equal(getLeaderboard(cells).player, null);
 });
 
@@ -34,12 +35,14 @@ test("分裂和合体不增加排行人数、不改变总质量", () => {
   splitCells(cells, { x: 1, y: 0 }, CONFIG.world, () => "child");
   let result = getLeaderboard(cells);
   assert.equal(result.total, 1);
+  assert.equal(result.alive, 1);
   assert.equal(result.player.mass, 144);
   assert.equal(result.player.cells, 2);
   for (const part of cells) { part.mergeRemaining = 0; part.x = 1000; }
   cells = updateCellGroup(cells, 0, CONFIG.world);
   result = getLeaderboard(cells);
   assert.equal(result.total, 1);
+  assert.equal(result.alive, 1);
   assert.equal(result.player.mass, 144);
   assert.equal(result.player.cells, 1);
 });

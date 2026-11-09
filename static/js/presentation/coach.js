@@ -18,7 +18,7 @@ export function practiceCheckpoints(snapshot) {
   const s = snapshot.stats ?? {}, drill = snapshot.practice;
   if (!drill) return [];
   const steps = drill.id === 'split' ? [
-    ['对准靶球，按 Q / 右键或「分裂」', s.splits > 0],
+    ['对准靶球，按 Q / W / 右键或「分裂」', s.splits > 0],
     ['让分身接触并吞噬蓝色靶球', drill.complete],
   ] : drill.id === 'feed' ? [
     ['面对右侧绿色刺球，按住 E / 孢子按钮', s.sporesEmitted > 0],

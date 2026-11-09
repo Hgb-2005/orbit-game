@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { RenderQuality, QUALITY_PRESETS } from "../static/js/presentation/quality.js";
 import { ROOM_DEFAULTS, ROOM_PRESETS, isStandardRules, describeRules, presetName } from "../static/js/network/room-rules.js";
 import { chooseBotDirection, chooseBotSplit, avoidSpikes } from "../static/js/core/ai.js";
-import { createBall } from "../static/js/core/entities.js";
+import { createBall, growBall } from "../static/js/core/entities.js";
 import { LocalSession } from "../static/js/session.js";
 import { RemoteSession } from "../static/js/network/remote-session.js";
 
@@ -54,6 +54,7 @@ const botScene = () => {
 };
 test("单机人机在安全时分裂，有刺球阻挡时取消并绕行", () => {
   const { bot, world } = botScene();
+  world.botDifficulty = "challenge";
   assert.ok(chooseBotSplit(bot, world));
   world.spikes = [{ x: 940, y: 550, radius: 58 }];
   assert.equal(chooseBotSplit(bot, world), null);
@@ -62,8 +63,9 @@ test("单机人机在安全时分裂，有刺球阻挡时取消并绕行", () =>
 });
 test("单机人机保护小分身，并在无威胁时主动收拢散开的球群", () => {
   const { bot, prey, world } = botScene();
+  world.botDifficulty = "challenge";
   world.bots.push(createBall({ id: "small", ownerId: "bot", mass: 36, x: 900, y: 550 }));
-  prey.mass = 80;
+  growBall(prey, 44);
   assert.ok(chooseBotDirection(bot, world).x < 0);
   prey.x = 2800; prey.y = 1800;
   world.bots[1].x = 1300;

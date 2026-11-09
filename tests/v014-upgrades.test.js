@@ -6,6 +6,7 @@ import { LocalSession } from '../static/js/session.js';
 import { InputController } from '../static/js/input.js';
 import { createBall } from '../static/js/core/entities.js';
 import { abilityReason, splitProjection, FrameMetrics } from '../static/js/presentation/tactics.js';
+import { smoothDisplayRadius } from '../static/js/presentation/radius-smoothing.js';
 import { isStandardRules, describeRules } from '../static/js/network/room-rules.js';
 
 const bounds = { width: 3200, height: 2200 };
@@ -119,6 +120,21 @@ test('性能统计使用实际样本并限制窗口，暂停和后台长帧不�
   assert.equal(summary.samples, 120); assert.equal(summary.fps, 50); assert.equal(summary.drawP95, 9);
   metrics.observe(1000, 1000, true); metrics.observe(10, 100, false); metrics.observe(NaN, 0, true);
   assert.deepEqual(metrics.snapshot(), summary);
+});
+test('性能面板保存模拟、碰撞、实体与存活数量，并由绘制半径平滑读取真实碰撞半径', () => {
+  const metrics = new FrameMetrics();
+  const details = { cellCount: 17, aiCount: 13, aliveCount: 4, simulationMs: 1.25, collisionMs: .35 };
+  metrics.observe(20, 4, true, details);
+  assert.deepEqual(metrics.snapshot(), {
+    fps: 50, drawP95: 4, samples: 1, ...details,
+  });
+
+  const ball = createBall({ id: 'smooth', x: 100, y: 100, mass: 64 });
+  const targetRadius = ball.radius;
+  assert.equal(smoothDisplayRadius(undefined, targetRadius, 1 / 60), targetRadius);
+  const displayed = smoothDisplayRadius(targetRadius, targetRadius * 2, 1 / 60);
+  assert.ok(displayed > targetRadius && displayed < targetRadius * 2);
+  assert.equal(ball.radius, targetRadius, '绘制平滑不得回写真实碰撞半径');
 });
 test('缩圈玩法独立记录且界面准确描述预告与扣命规则', () => {
   assert.equal(isStandardRules({ mode: 'shrink' }), false);

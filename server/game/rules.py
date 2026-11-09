@@ -6,6 +6,18 @@ import json
 
 TEAMS = (("薄荷队", "#93d9bc"), ("星云队", "#b5a3e8"))
 
+# Shared authoritative physics rules. The browser uses the same values in
+# static/js/config.js; keeping them here prevents a room rule from silently
+# changing collision or boundary behaviour.
+EAT_RADIUS_RATIO = 1.18
+BOUNDARY_POLICY = "clamp"
+BOUNDARY_RESTITUTION = 0.6
+
+
+def has_eat_advantage(eater, prey, margin=1.0):
+    """Use radius for every eat decision; mass alone is not an equivalent proxy."""
+    return eater["radius"] > prey["radius"] * EAT_RADIUS_RATIO * margin
+
 
 @dataclass(frozen=True)
 class RoomRules:

@@ -2,6 +2,8 @@
 
 import math
 
+from .rules import BOUNDARY_POLICY, BOUNDARY_RESTITUTION
+
 BOUNDS = {"width": 3200, "height": 2200}
 INITIAL_MASS = 36
 MAX_CELLS = 8
@@ -28,10 +30,48 @@ def ball(ball_id, owner, position):
     return entity
 
 
-def keep_inside(cell):
-    radius = cell["radius"]
-    cell["x"] = clamp(cell["x"], radius, BOUNDS["width"] - radius)
-    cell["y"] = clamp(cell["y"], radius, BOUNDS["height"] - radius)
+def keep_inside(cell, bounds=None, policy=None, restitution=None):
+    """Apply every boundary correction through one clamp/bounce implementation."""
+    bounds = bounds or BOUNDS
+    policy = policy or BOUNDARY_POLICY
+    restitution = BOUNDARY_RESTITUTION if restitution is None else restitution
+
+    def fix_axis(position_key, velocity_key, impulse_key, size):
+        if cell["radius"] * 2 >= size:
+            cell[position_key] = size / 2
+            cell[velocity_key] = 0
+            if impulse_key in cell:
+                cell[impulse_key] = 0
+            return
+        minimum, maximum = cell["radius"], size - cell["radius"]
+        position, velocity = cell[position_key], cell[velocity_key]
+        impulse = cell.get(impulse_key, 0)
+        if position < minimum:
+            cell[position_key] = minimum
+            if policy == "bounce" and velocity < 0:
+                cell[velocity_key] = -velocity * restitution
+                if impulse_key in cell and impulse < 0:
+                    cell[impulse_key] = -impulse * restitution
+            else:
+                if velocity < 0:
+                    cell[velocity_key] = 0
+                if impulse_key in cell and impulse < 0:
+                    cell[impulse_key] = 0
+        elif position > maximum:
+            cell[position_key] = maximum
+            if policy == "bounce" and velocity > 0:
+                cell[velocity_key] = -velocity * restitution
+                if impulse_key in cell and impulse > 0:
+                    cell[impulse_key] = -impulse * restitution
+            else:
+                if velocity > 0:
+                    cell[velocity_key] = 0
+                if impulse_key in cell and impulse > 0:
+                    cell[impulse_key] = 0
+
+    fix_axis("x", "vx", "impulseX", bounds["width"])
+    fix_axis("y", "vy", "impulseY", bounds["height"])
+    return cell
 
 
 def move(cell, direction, dt, multiplier=1):

@@ -1,5 +1,5 @@
 import { CONFIG } from "../config.js";
-import { distanceSquared } from "./entities.js";
+import { distanceSquared, hasEatSizeAdvantage } from "./entities.js";
 import { BOT_ROLES } from "./progression.js";
 
 export const BOT_SKILLS = Object.freeze({
@@ -8,6 +8,8 @@ export const BOT_SKILLS = Object.freeze({
   challenge: { reaction: .16, margin: 1.08, maxCells: 4, rest: 9 },
 });
 const unit = (x, y) => { const length = Math.hypot(x, y) || 1; return { x: x / length, y: y / length }; };
+const nowFor = world => Number.isFinite(world.elapsed) ? world.elapsed : 0;
+const idNumber = value => [...String(value)].reduce((sum, char) => sum + char.charCodeAt(0), 0);
 
 export function segmentDistance(point, start, end) {
   const dx = end.x - start.x, dy = end.y - start.y;
@@ -31,6 +33,8 @@ export function avoidSpikes(bot, direction, spikes = []) {
 /** 决策只返回方向，AI 不直接修改位置；未来可完整迁移到服务器。 */
 export function chooseBotDirection(bot, world) {
   const others = [...world.playerCells, ...world.bots];
+  const now = nowFor(world);
+  const difficulty = Object.hasOwn(BOT_SKILLS, world.botDifficulty) ? world.botDifficulty : "standard";
   let threat = null;
   let prey = null;
   let threatDistance = Infinity;
@@ -39,20 +43,42 @@ export function chooseBotDirection(bot, world) {
   const siblings = others.filter(other => other.ownerId === bot.ownerId && other.alive);
   let threatenedCell = bot;
 
-  for (const other of others) {
-    if (other.ownerId === bot.ownerId || !other.alive) continue;
-    if (world.isProtected?.(other) || (other.isPlayer && world.protectionRemaining > 0)) continue;
-    const distance = distanceSquared(bot, other);
-    for (const cell of siblings) {
-      const gap = Math.hypot(other.x - cell.x, other.y - cell.y) - other.radius - cell.radius;
-      if (other.mass >= cell.mass * CONFIG.rules.eatMassRatio && gap < 220 && gap < threatDistance) {
-        threat = other; threatDistance = gap; threatenedCell = cell;
+  // 休闲档只觅食和漫游，不读取敌人信息；这是难度差异，不改变移动或吞噬规则。
+  if (difficulty !== "casual") {
+    const enemies = others.filter(other => other.ownerId !== bot.ownerId && other.alive &&
+      !world.isProtected?.(other) && !(other.isPlayer && world.protectionRemaining > 0));
+    for (const other of enemies) {
+      const distance = distanceSquared(bot, other);
+      for (const cell of siblings) {
+        const gap = Math.hypot(other.x - cell.x, other.y - cell.y) - other.radius - cell.radius;
+        if (hasEatSizeAdvantage(other, cell) && gap < 220 && gap < threatDistance) {
+          threat = other; threatDistance = gap; threatenedCell = cell;
+        }
+      }
+      if (hasEatSizeAdvantage(bot, other) &&
+          distance < (role.chaseRange + bot.radius) ** 2 && distance < preyDistance) {
+        prey = other;
+        preyDistance = distance;
       }
     }
-    if (bot.mass >= other.mass * CONFIG.rules.eatMassRatio &&
-        distance < (role.chaseRange + bot.radius) ** 2 && distance < preyDistance) {
-      prey = other;
-      preyDistance = distance;
+
+    // 目标记忆避免 AI 每隔几十毫秒在等距目标之间来回抖动。
+    if (bot.targetUntil > now && bot.targetId) {
+      const remembered = enemies.find(other => other.id === bot.targetId);
+      if (bot.targetKind === "threat" && remembered) {
+        const ownerCells = siblings.filter(cell => hasEatSizeAdvantage(remembered, cell));
+        const nearest = ownerCells.sort((a, b) => distanceSquared(a, remembered) - distanceSquared(b, remembered))[0];
+        const gap = nearest && Math.hypot(remembered.x - nearest.x, remembered.y - nearest.y) -
+          remembered.radius - nearest.radius;
+        // 记忆只抑制短时间内的目标抖动，不能让已经远离的旧目标覆盖新的觅食或收拢决策。
+        if (nearest && gap < 220) {
+          threat = remembered;
+          threatenedCell = nearest;
+        }
+      } else if (bot.targetKind === "prey" && remembered && hasEatSizeAdvantage(bot, remembered) &&
+          distanceSquared(bot, remembered) < (role.chaseRange + bot.radius) ** 2) {
+        prey = remembered;
+      }
     }
   }
 
@@ -61,9 +87,16 @@ export function chooseBotDirection(bot, world) {
   if (threat) {
     dx = threatenedCell.x - threat.x;
     dy = threatenedCell.y - threat.y;
+    rememberTarget(bot, "threat", threat.id, now);
   } else if (prey) {
     dx = prey.x - bot.x;
     dy = prey.y - bot.y;
+    // 挑战档会预判目标移动；标准档仍走最短直线，便于玩家读懂。
+    if (difficulty === "challenge") {
+      dx += (prey.vx ?? 0) * .18;
+      dy += (prey.vy ?? 0) * .18;
+    }
+    rememberTarget(bot, "prey", prey.id, now);
   } else {
     let closest = null;
     let closestDistance = Infinity;
@@ -74,8 +107,16 @@ export function chooseBotDirection(bot, world) {
         closestDistance = distance;
       }
     }
-    dx = closest ? closest.x - bot.x : 0;
-    dy = closest ? closest.y - bot.y : 0;
+    if (closest) {
+      dx = closest.x - bot.x;
+      dy = closest.y - bot.y;
+      rememberTarget(bot, "food", closest.id, now);
+    } else {
+      const angle = idNumber(bot.id) * .37 + now * .17;
+      dx = Math.cos(angle);
+      dy = Math.sin(angle);
+      rememberTarget(bot, "wander", null, now);
+    }
   }
 
   if (!threat && siblings.length > 1) {
@@ -87,7 +128,11 @@ export function chooseBotDirection(bot, world) {
     }
   }
   if (Math.hypot(dx, dy) < .001) return { x: 0, y: 0 };
-  ({ x: dx, y: dy } = avoidSpikes(bot, unit(dx, dy), world.spikes));
+  let direction = unit(dx, dy);
+  // 只有挑战档会主动绕刺；简单档被刺扎到后才按真实规则分裂。
+  if (difficulty === "challenge") direction = avoidSpikes(bot, direction, world.spikes ?? []);
+  dx = direction.x;
+  dy = direction.y;
 
   // 靠近边界时施加回到场内的力，防止逃跑的 AI 长时间贴墙不动。
   const edge = bot.radius + 65;
@@ -99,17 +144,25 @@ export function chooseBotDirection(bot, world) {
   return { x: dx / length, y: dy / length };
 }
 
+function rememberTarget(bot, kind, id, now) {
+  bot.targetKind = kind;
+  bot.targetId = id;
+  bot.targetUntil = now + CONFIG.bots.targetMemorySeconds;
+}
+
 /** 追猎者只在分裂后仍能吃掉目标、且附近没有强敌时尝试弹射。 */
 export function chooseBotSplit(bot, world) {
   const skill = BOT_SKILLS[world.botDifficulty] ?? BOT_SKILLS.standard;
-  if (skill.maxCells === 1) return null;
+  // 分裂追猎是挑战档专属技能，标准档只追直线，避免基础局突然恶化。
+  if (world.botDifficulty !== "challenge" || skill.maxCells === 1) return null;
   if (world.isProtected?.(bot)) return null;
-  if (!(bot.role === "hunter" || world.botDifficulty === "challenge" && bot.role === "rival") || bot.mass < CONFIG.split.minimumMass) return null;
+  if (!(bot.role === "hunter" || bot.role === "rival") || bot.mass < CONFIG.split.minimumMass) return null;
   const others = [...world.playerCells, ...world.bots].filter(other =>
     other.alive && other.ownerId !== bot.ownerId && !world.isProtected?.(other) && !(other.isPlayer && world.protectionRemaining > 0));
+  const splitRadius = Math.sqrt(bot.mass / 2) * CONFIG.rules.radiusScale;
   if (others.some(other => distanceSquared(bot, other) < (bot.radius + other.radius + 180) ** 2 &&
-      other.mass >= bot.mass / 2 * CONFIG.rules.eatMassRatio)) return null;
-  const prey = others.filter(other => bot.mass / 2 >= other.mass * CONFIG.rules.eatMassRatio * skill.margin &&
+      other.radius > splitRadius * CONFIG.rules.eatRadiusRatio)) return null;
+  const prey = others.filter(other => splitRadius > other.radius * CONFIG.rules.eatRadiusRatio * skill.margin &&
     distanceSquared(bot, other) > (bot.radius + other.radius + 10) ** 2 &&
     distanceSquared(bot, other) < (bot.radius + other.radius + 95) ** 2 &&
     !(world.spikes ?? []).some(spike => segmentDistance(spike, bot, other) < bot.radius + spike.radius + 20))

@@ -2,7 +2,7 @@ import { CONFIG } from "../config.js";
 import { createBall, growBall } from "./entities.js";
 
 export const PRACTICE_DRILLS = Object.freeze([
-  { id: "split", title: "分裂吞噬", description: "鼠标指向蓝色靶球，右键 / Q 分身并吞噬它。", goal: "分裂一次并吞噬靶球" },
+  { id: "split", title: "分裂吞噬", description: "鼠标指向蓝色靶球，右键 / Q / W 分身并吞噬它。", goal: "分裂一次并吞噬靶球" },
   { id: "feed", title: "喂刺反击", description: "开局面对右侧刺球，按住 E 原地连吐；也可移动调整角度，喂满 5 颗发射反击刺。", goal: "喂出一颗反击刺" },
   { id: "regroup", title: "聚拢合体", description: "按住 C 或右侧聚拢按钮收拢四个分身，等待 10 秒合体冷却后自动合体。", goal: "聚拢至少半秒，再合成单球" },
 ]);

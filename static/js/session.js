@@ -14,12 +14,14 @@ export class LocalSession {
     this.world = new World();
     this.state = "ready";
     this.roundId = '';
+    this.simulationMs = 0;
   }
 
-  start(viewSize, mode = "classic", drill = "split") {
+  start(viewSize, mode = "classic", drill = "split", options = {}) {
     this.roundId = `local-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
-    this.world.reset(viewSize, mode, drill);
+    this.world.reset(viewSize, mode, drill, options);
     this.state = "playing";
+    this.simulationMs = 0;
   }
 
   pause() {
@@ -37,7 +39,9 @@ export class LocalSession {
 
   step(dt, input) {
     if (this.state !== "playing") return [];
+    const started = globalThis.performance?.now?.() ?? Date.now();
     this.world.update(dt, input);
+    this.simulationMs = (globalThis.performance?.now?.() ?? Date.now()) - started;
     if (this.world.gameOver) this.state = "gameover";
     return this.world.events;
   }
@@ -57,7 +61,9 @@ export class LocalSession {
        sprint: world.sprint.getSnapshot(world.playerCells), split: world.split.getSnapshot(world.playerCells), spore: world.getSporeSnapshot(), stage: world.stage,
       difficulty: world.difficulty, peakMass: world.peakMass,
       leaderboard: survival ? { kind: "survival", entries: survival.standings.slice(0, 5),
-        player: survival.player, total: survival.total } : getLeaderboard(cells),
+        player: survival.player, total: survival.total, alive: survival.active } :
+        getLeaderboard(cells),
+      metrics: { simulationMs: this.simulationMs, collisionMs: world.lastCollisionMs || 0 },
       hotspots: world.hotspots.getSnapshot(),
     };
   }

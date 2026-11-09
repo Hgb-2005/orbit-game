@@ -2,6 +2,7 @@ import { CONFIG } from "./config.js";
 import { describeBallLabel, layoutBallLabels } from "./presentation/labels.js";
 import { CombatFeedback, nearestDanger } from "./presentation/combat-feedback.js";
 import { RenderQuality } from "./presentation/quality.js";
+import { smoothDisplayRadius } from "./presentation/radius-smoothing.js";
 import { splitProjection, FrameMetrics, SIGNAL_COLORS, SIGNAL_NAMES } from './presentation/tactics.js';
 
 const THEMES = {
@@ -24,6 +25,7 @@ export class Renderer {
     this.trailTimer = 0;
     this.labelObstacles = [];
     this.labelPlacements = [];
+    this.displayRadii = new Map();
     let storage = null;
     try { storage = window.localStorage; } catch { /* 无存储权限仍可调画质。 */ }
     this.quality = new RenderQuality(storage);
@@ -70,6 +72,7 @@ export class Renderer {
     this.particles = [];
     this.trails = [];
     this.trailTimer = 0;
+    this.displayRadii.clear();
   }
 
   setQuality(mode) {
@@ -85,6 +88,7 @@ export class Renderer {
 
   draw(snapshot, dt, feedback) {
     const drawStarted = performance.now();
+    this.prepareDisplayRadii(snapshot, dt);
     this.combat.update(dt, snapshot.state === "playing");
     const { ctx, camera } = this;
     const colors = THEMES[this.theme];
@@ -182,8 +186,35 @@ export class Renderer {
     this.drawCombatText(colors);
     this.drawMiniMap(snapshot, colors, feedback);
     const drawCost = performance.now() - drawStarted;
-    this.metrics.observe(this.frameMs, drawCost, snapshot.state === 'playing');
+    const liveBalls = [...snapshot.playerCells, ...snapshot.bots].filter(ball => ball.alive);
+    const aliveCount = new Set(liveBalls.map(ball => ball.ownerId)).size;
+    const aiCount = new Set(snapshot.bots.filter(ball => ball.alive).map(ball => ball.ownerId)).size;
+    this.metrics.observe(this.frameMs, drawCost, snapshot.state === 'playing', {
+      cellCount: liveBalls.length,
+      aiCount,
+      aliveCount,
+      simulationMs: snapshot.metrics?.simulationMs,
+      collisionMs: snapshot.metrics?.collisionMs,
+    });
     if (this.quality.observe(drawCost, dt, snapshot.state === "playing")) this.applyQuality();
+  }
+
+  prepareDisplayRadii(snapshot, dt) {
+    const visibleIds = new Set();
+    for (const ball of [...snapshot.playerCells, ...snapshot.bots]) {
+      if (!ball.alive) continue;
+      visibleIds.add(ball.id);
+      const previous = this.displayRadii.get(ball.id);
+      const radius = smoothDisplayRadius(previous, ball.radius, dt, previous === undefined);
+      this.displayRadii.set(ball.id, radius);
+    }
+    for (const id of this.displayRadii.keys()) {
+      if (!visibleIds.has(id)) this.displayRadii.delete(id);
+    }
+  }
+
+  displayRadius(ball) {
+    return this.displayRadii.get(ball.id) ?? ball.radius;
   }
 
   drawSafeZone(snapshot) {
@@ -241,7 +272,7 @@ export class Renderer {
 
   visible(entity) {
     const point = this.camera.worldToScreen(entity);
-    const radius = entity.radius * this.camera.zoom + 35;
+    const radius = this.displayRadius(entity) * this.camera.zoom + 35;
     return point.x > -radius && point.x < this.width + radius && point.y > -radius && point.y < this.height + radius;
   }
 
@@ -331,9 +362,10 @@ export class Renderer {
     if (danger) {
       const { cell, enemy } = danger;
       const angle = Math.atan2(enemy.y - cell.y, enemy.x - cell.x);
+      const cellRadius = this.displayRadius(cell);
       ctx.globalAlpha = .8; ctx.strokeStyle = "#e79b8e"; ctx.lineWidth = 3 / camera.zoom;
       ctx.beginPath();
-      ctx.arc(cell.x, cell.y, cell.radius + 9 / camera.zoom, angle - .65, angle + .65);
+      ctx.arc(cell.x, cell.y, cellRadius + 9 / camera.zoom, angle - .65, angle + .65);
       ctx.stroke();
     }
     ctx.restore();
@@ -383,6 +415,7 @@ export class Renderer {
 
   drawBall(ball, snapshot, colors) {
     const { ctx } = this;
+    const radius = this.displayRadius(ball);
     const protectedPlayer = snapshot.survival ? snapshot.survival.protectionByOwner[ball.ownerId] > 0 :
       ball.isPlayer && snapshot.protectionRemaining > 0;
     const fill = snapshot.team ? ball.color : ball.isPlayer ? colors.player : ball.color;
@@ -390,21 +423,21 @@ export class Renderer {
     ctx.fillStyle = fill;
     ctx.globalAlpha = ball.isPlayer ? 1 : 0.88;
     ctx.beginPath();
-    ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+    ctx.arc(ball.x, ball.y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
     if (ball.isAlly || (snapshot.team && ball.isPlayer)) {
       ctx.strokeStyle = snapshot.team.color;
       ctx.lineWidth = (ball.isPlayer ? 2.5 : 1.5) / this.camera.zoom;
       ctx.setLineDash(ball.isPlayer ? [] : [5 / this.camera.zoom, 4 / this.camera.zoom]);
-      ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius + 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ball.x, ball.y, radius + 5, 0, Math.PI * 2); ctx.stroke();
       ctx.setLineDash([]);
     }
     ctx.strokeStyle = fill;
     ctx.lineWidth = 1;
     ctx.globalAlpha = ball.isPlayer && snapshot.sprint.active ? 0.75 : 0.18;
     ctx.beginPath();
-    ctx.arc(ball.x, ball.y, ball.radius + 5, 0, Math.PI * 2);
+    ctx.arc(ball.x, ball.y, radius + 5, 0, Math.PI * 2);
     ctx.stroke();
     ctx.globalAlpha = 1;
     if (protectedPlayer) {
@@ -412,7 +445,7 @@ export class Renderer {
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 6]);
       ctx.beginPath();
-      ctx.arc(ball.x, ball.y, ball.radius + 11, snapshot.elapsed, snapshot.elapsed + Math.PI * 2);
+      ctx.arc(ball.x, ball.y, radius + 11, snapshot.elapsed, snapshot.elapsed + Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -422,7 +455,7 @@ export class Renderer {
       ctx.lineWidth = 2;
       ctx.beginPath();
       const progress = 1 - ball.mergeRemaining / CONFIG.split.mergeDelay;
-      ctx.arc(ball.x, ball.y, ball.radius + 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, progress));
+      ctx.arc(ball.x, ball.y, radius + 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, progress));
       ctx.stroke();
       ctx.globalAlpha = 1;
       // 当前最大分身再加一圈细高亮，8 球状态下能快速看出分裂预算来自哪一球。
@@ -430,7 +463,7 @@ export class Renderer {
         ctx.globalAlpha = 0.9;
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.arc(ball.x, ball.y, ball.radius + 13, 0, Math.PI * 2);
+        ctx.arc(ball.x, ball.y, radius + 13, 0, Math.PI * 2);
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
@@ -438,8 +471,8 @@ export class Renderer {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = colors.playerInk;
-    ctx.font = `500 ${Math.max(10, Math.min(19, ball.radius * 0.4))}px 'Microsoft YaHei', sans-serif`;
-    ctx.fillText(ball.name, ball.x, ball.y, ball.radius * 1.7);
+    ctx.font = `500 ${Math.max(10, Math.min(19, radius * 0.4))}px 'Microsoft YaHei', sans-serif`;
+    ctx.fillText(ball.name, ball.x, ball.y, radius * 1.7);
     ctx.restore();
   }
 
@@ -449,7 +482,7 @@ export class Renderer {
     const circles = balls.map(ball => {
       const point = this.camera.worldToScreen(ball);
       const halo = ball.isPlayer && snapshot.protectionRemaining > 0 ? 11 : 5;
-      return { id: ball.id, ...point, radius: (ball.radius + halo) * this.camera.zoom };
+      return { id: ball.id, ...point, radius: (this.displayRadius(ball) + halo) * this.camera.zoom };
     });
     const labels = balls.map((ball, index) => {
       const description = describeBallLabel(ball, snapshot, this.camera.zoom);
@@ -615,7 +648,7 @@ export class Renderer {
     if (speed < 15) return;
     const point = this.camera.worldToScreen(player);
     const angle = Math.atan2(player.vy, player.vx);
-    const distance = player.radius * this.camera.zoom + 15;
+    const distance = this.displayRadius(player) * this.camera.zoom + 15;
     const { ctx } = this;
     ctx.save();
     ctx.translate(point.x, point.y);

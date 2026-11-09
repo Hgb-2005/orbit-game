@@ -2,10 +2,11 @@
 
 import math
 import random
+import time
 
 from .entities import BOUNDS, INITIAL_MASS, MAX_CELLS, ball, clamp, grow, keep_inside, merge, move, split
 from .spatial import SpatialGrid
-from .rules import RoomRules, TEAMS
+from .rules import EAT_RADIUS_RATIO, RoomRules, TEAMS
 from .spikes import feed_spikes, update_spikes
 from .stats import RoundStats
 from .ai import decide, avoid_spikes, PROFILES
@@ -70,6 +71,8 @@ class MultiplayerWorld:
         self.food_grid = SpatialGrid()
         self.spore_grid = SpatialGrid()
         self.spike_grid = SpatialGrid()
+        self.last_collision_ms = 0.0
+        self.last_simulation_ms = 0.0
         self.spikes = self.create_spikes(starts)
         team_slots = [0, 0]
         for index, member in enumerate(members):
@@ -163,6 +166,16 @@ class MultiplayerWorld:
         owner["queuedSprint"] = owner["queuedSplit"] = owner["queuedSpore"] = False
 
     def update(self, dt):
+        """记录整个权威模拟步耗时，提前结束也通过 finally 得到准确指标。"""
+        if self.finished:
+            return
+        started = time.perf_counter()
+        try:
+            return self._update(dt)
+        finally:
+            self.last_simulation_ms = (time.perf_counter() - started) * 1000
+
+    def _update(self, dt):
         if self.finished:
             return
         self.tick += 1
@@ -401,53 +414,75 @@ class MultiplayerWorld:
             self.emit("spike", owner, x=hit["x"], y=hit["y"], color=owner["color"], text="扎刺 −8%")
 
     def consume_balls(self):
+        """Resolve player-cell meals after collecting claims, so one frame is atomic."""
+        started = time.perf_counter()
         cells = sorted(self.all_cells(), key=lambda cell: -cell["mass"])
         self.ball_grid.build(cells)
         order = {id(cell): index for index, cell in enumerate(cells)}
         counts = {owner_id: len(group) for owner_id, group in self.cells.items()}
-        respawns = []
+        claims = {}
         for eater in cells:
             candidates = sorted(self.ball_grid.query_circle(eater["x"], eater["y"], eater["radius"] + 1),
                                 key=lambda cell: order[id(cell)])
             for prey in candidates:
                 if (not eater["alive"] or not prey["alive"] or eater["ownerId"] == prey["ownerId"]
-                        or eater["mass"] < prey["mass"] * 1.28):
+                        or eater["radius"] <= prey["radius"] * EAT_RADIUS_RATIO):
                     continue
                 attacker, victim = self.players[eater["ownerId"]], self.players[prey["ownerId"]]
                 if self.allies(attacker, victim):
                     continue
                 if max(attacker["protectedUntil"], victim["protectedUntil"]) > self.elapsed:
                     continue
-                threshold = eater["radius"] - prey["radius"] * .35
-                if (eater["x"] - prey["x"]) ** 2 + (eater["y"] - prey["y"]) ** 2 >= threshold ** 2:
+                eat_distance = eater["radius"] - prey["radius"]
+                if ((eater["x"] - prey["x"]) ** 2 + (eater["y"] - prey["y"]) ** 2
+                        >= eat_distance ** 2):
                     continue
-                prey["alive"] = False
-                grow(eater, prey["mass"])
-                attacker["score"] += math.floor(prey["mass"] + .5)
-                attacker["eatenBalls"] += 1
-                victim["killer"] = attacker["name"]
-                counts[prey["ownerId"]] -= 1
-                self.emit("eat", attacker, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey["mass"])
-                attacker["stats"].observe(self.cells[eater["ownerId"]])
-                if counts[prey["ownerId"]] > 0:
-                    self.emit("celllost", victim, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey["mass"])
-                else:
-                    victim["stats"].record({"type": "celllost"}, self.tick)
-                    victim["lives"] -= 1
-                    victim["deaths"] += 1
-                    victim['stats'].death(self.elapsed, 'eaten', attacker['name'], prey['mass'])
-                    attacker["lives"] += 1
-                    attacker["kills"] += 1
-                    self.emit("life", attacker, lives=attacker["lives"], victim=victim["name"])
-                    if victim["lives"] > 0:
-                        respawns.append(victim)
-                    else:
-                        self.emit("eliminated", victim, name=victim["name"])
+                # Cells are visited largest first; the first claim has stable priority.
+                claims.setdefault(id(prey), {
+                    "eater": eater, "prey": prey, "attacker": attacker,
+                    "victim": victim, "mass": prey["mass"],
+                })
+
+        # A cell that is eaten this frame cannot also collect mass, kills, lives,
+        # or score. This also resolves A eats B while B tries to eat C.
+        prey_ids = set(claims)
+        settled = [claim for prey_id, claim in claims.items() if id(claim["eater"]) not in prey_ids]
+        settled.sort(key=lambda claim: order[id(claim["eater"])])
+        for claim in settled:
+            claim["prey"]["alive"] = False
+        for claim in settled:
+            grow(claim["eater"], claim["mass"])
+
+        respawns = []
+        for claim in settled:
+            eater, prey = claim["eater"], claim["prey"]
+            attacker, victim, prey_mass = claim["attacker"], claim["victim"], claim["mass"]
+            attacker["score"] += math.floor(prey_mass + .5)
+            attacker["eatenBalls"] += 1
+            victim["killer"] = attacker["name"]
+            counts[prey["ownerId"]] -= 1
+            self.emit("eat", attacker, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey_mass)
+            attacker["stats"].observe(self.cells[eater["ownerId"]])
+            if counts[prey["ownerId"]] > 0:
+                self.emit("celllost", victim, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey_mass)
+                continue
+            victim["stats"].record({"type": "celllost"}, self.tick)
+            victim["lives"] -= 1
+            victim["deaths"] += 1
+            victim["stats"].death(self.elapsed, "eaten", attacker["name"], prey_mass)
+            attacker["lives"] += 1
+            attacker["kills"] += 1
+            self.emit("life", attacker, lives=attacker["lives"], victim=victim["name"])
+            if victim["lives"] > 0:
+                respawns.append(victim)
+            else:
+                self.emit("eliminated", victim, name=victim["name"])
         for owner_id in self.cells:
             self.cells[owner_id] = [cell for cell in self.cells[owner_id] if cell["alive"]]
         for owner in respawns:
             self.respawn(owner)
         self.check_victory()
+        self.last_collision_ms = (time.perf_counter() - started) * 1000
 
     def allies(self, first, second):
         return self.rules.mode == "teams" and first["team"] == second["team"]
@@ -623,6 +658,8 @@ class MultiplayerWorld:
                 "rules": self.rules.snapshot(), "teams": self.team_standings(),
                 "safeZone": self.safe_zone.at(self.elapsed) if self.safe_zone else None,
                 "pings": self.signals.snapshot(self.elapsed),
+                "metrics": {"simulationMs": round(self.last_simulation_ms, 3),
+                            "collisionMs": round(self.last_collision_ms, 3)},
                 "cells": cells, "foods": self.foods, "spores": [dict(spore) for spore in self.spores],
                 "spikes": [dict(spike) for spike in self.spikes], "hotspots": dict(self.hotspots), "players": players,
                 "standings": standings, "finished": self.finished, "reason": self.reason,

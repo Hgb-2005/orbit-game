@@ -234,7 +234,8 @@ export class GameUI {
   renderLeaderboard(leaderboard) {
     const signature = JSON.stringify({ entries: leaderboard.entries.map(entry => [entry.ownerId, entry.name, entry.rank, entry.movement, Math.round(entry.mass), entry.cells, entry.color]),
       kind: leaderboard.kind, lives: leaderboard.entries.map(entry => [entry.lives, entry.kills]), playerLives: leaderboard.player?.lives,
-      playerKills: leaderboard.player?.kills, playerRank: leaderboard.player?.rank, playerMass: Math.round(leaderboard.player?.mass ?? 0), settled: leaderboard.settled, networkAge: Math.round(leaderboard.networkAge ?? -1), total: leaderboard.total });
+      playerKills: leaderboard.player?.kills, playerRank: leaderboard.player?.rank, playerMass: Math.round(leaderboard.player?.mass ?? 0),
+      settled: leaderboard.settled, networkAge: Math.round(leaderboard.networkAge ?? -1), total: leaderboard.total, alive: leaderboard.alive });
     if (signature === this.lastLeaderboard) return;
     this.lastLeaderboard = signature;
     const rows = leaderboard.entries.map(entry => {
@@ -263,7 +264,7 @@ export class GameUI {
     $("leaderboard-list").replaceChildren(...rows);
     $("leaderboard-caption").textContent = leaderboard.kind === "survival" ? "命数 → 击败 → 质量" : "总质量 · 前五名";
     $("leaderboard-sync").textContent = leaderboard.settled ? "本局已结算" : leaderboard.networkAge == null ? "实时同步" : `同步 ${Math.round(leaderboard.networkAge)} ms 前`;
-    $("leaderboard-rank").textContent = leaderboard.player ? `你 #${leaderboard.player.rank}` : "已出局";
+    $("leaderboard-rank").textContent = leaderboard.player ? `你 #${leaderboard.player.rank} · 存活 ${leaderboard.alive} / ${leaderboard.total}` : `已出局 · 存活 ${leaderboard.alive} / ${leaderboard.total}`;
     $("leaderboard-player").textContent = leaderboard.player ?
       `你的名次 ${leaderboard.player.rank} / ${leaderboard.total} · ${leaderboard.kind === "survival" ? `${leaderboard.player.lives}命 · ${leaderboard.player.kills}次击败 · ` : ""}${number(leaderboard.player.mass)} m` : "本局全部分身已被吞噬";
   }
@@ -351,7 +352,7 @@ export class GameUI {
     const largestMass = snapshot.player.largestMass ?? snapshot.player.mass;
     const smallestMass = snapshot.player.smallestMass ?? snapshot.player.mass;
     $("cell-quality").textContent = split.count > 1 ? `最大 ${number(largestMass)} · 最小 ${number(smallestMass)}` : `当前 ${number(largestMass)}`;
-    $("merge-status").textContent = split.count < 2 ? "长大后右键分身" : split.merging ? "正在靠拢合体" : `${split.mergeRemaining.toFixed(1)}s 后可合体`;
+    $("merge-status").textContent = split.count < 2 ? "长大后右键 / Q / W 分身" : split.merging ? "正在靠拢合体" : `${split.mergeRemaining.toFixed(1)}s 后可合体`;
     $("protection-hint").hidden = snapshot.state !== "playing" || snapshot.spectating || snapshot.protectionRemaining <= 0;
     $("protection-seconds").textContent = Math.ceil(snapshot.protectionRemaining);
     if (this.lastState === snapshot.state) return;
@@ -414,7 +415,7 @@ export class GameUI {
       description: `你的全部分身已被吞噬，最后的对手是「${snapshot.killer}」。再试一次，继续生长。`,
       button: "再来一局", footnote: "每一次重新开始，都有新的可能",
     } : {
-       eyebrow: "A LITTLE LIGHT, A BIG ADVENTURE", title: "准备好，开始生长", description: "收集微光，右键 / Q 分身追击；长按左键 / E 连吐孢子。喂绿色刺球 5 颗孢子，发射临时刺球反击强敌。", button: "开始游戏", footnote: "开局自动专注 · F 键随时切换",
+       eyebrow: "A LITTLE LIGHT, A BIG ADVENTURE", title: "准备好，开始生长", description: "收集微光，右键 / Q / W 分身追击；长按左键 / E 连吐孢子。喂绿色刺球 5 颗孢子，发射临时刺球反击强敌。", button: "开始游戏", footnote: "开局自动专注 · F 键随时切换",
     };
     if (state === "ready" && this.mode === "survival") copy = {
       eyebrow: "THREE LIVES. FIVE MINUTES.", title: "留住生命，争夺球场",

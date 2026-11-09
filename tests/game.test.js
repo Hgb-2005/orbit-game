@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CONFIG } from "../static/js/config.js";
-import { canEat, createBall, growBall, moveBall } from "../static/js/core/entities.js";
+import { canEat, createBall, growBall, moveBall, resolveBallBounds } from "../static/js/core/entities.js";
 import { World } from "../static/js/core/world.js";
 import { LocalSession } from "../static/js/session.js";
 import { ScoreService } from "../static/js/services/scores.js";
@@ -46,11 +46,15 @@ test("吞噬需要足够体型差和重叠距离", () => {
   const small = createBall({ id: "small", x: 100, y: 100, mass: 30 });
   assert.equal(canEat(big, small), true);
   assert.equal(canEat(small, big), false);
-  small.x = 180;
-  assert.equal(canEat(big, small), false);
-  small.x = 100;
-  small.mass = 99;
-  assert.equal(canEat(big, small), false);
+  small.x = big.x + big.radius + small.radius;
+  assert.equal(canEat(big, small), false, "相切不是完全包含");
+  small.x = big.x + big.radius - small.radius + .001;
+  assert.equal(canEat(big, small), false, "圆心距离必须严格小于半径差");
+  const thresholdMass = big.mass / CONFIG.rules.eatRadiusRatio ** 2;
+  const atThreshold = createBall({ id: "threshold", x: big.x, y: big.y, mass: thresholdMass + 1e-4 });
+  assert.equal(canEat(big, atThreshold), false, "捕食者半径必须严格大于 1.18 倍");
+  const belowThreshold = createBall({ id: "eligible", x: big.x, y: big.y, mass: thresholdMass - 1e-4 });
+  assert.equal(canEat(big, belowThreshold), true);
 });
 
 test("出生保护结束后会被大球吞噬，死亡后世界停止更新", () => {
@@ -80,6 +84,37 @@ test("玩家吞噬 AI 时只加一次分，并移除被吞噬实体", () => {
   assert.equal(world.bots.length, 0);
 });
 
+test("两个捕食者争抢同一猎物时，只有质量优先级更高的球获得一次质量与分数", () => {
+  const world = worldWithNoBots();
+  world.elapsed = 4;
+  growBall(world.player, 164);
+  const rival = createBall({ id: "rival", x: world.player.x, y: world.player.y, mass: 150 });
+  const prey = createBall({ id: "prey", x: world.player.x, y: world.player.y, mass: 50 });
+  world.bots = [rival, prey];
+  world.consumeBalls();
+  assert.equal(world.player.mass, 250);
+  assert.equal(rival.mass, 150);
+  assert.equal(world.score, 50);
+  assert.equal(world.eatenBalls, 1);
+  assert.deepEqual(world.bots, [rival]);
+  assert.equal(world.events.filter(event => event.type === "eat").length, 1);
+});
+
+test("同一帧的碰撞先原子结算，已被吞噬的球不能继续抢食或重复计分", () => {
+  const world = worldWithNoBots();
+  world.elapsed = 4;
+  growBall(world.player, 1964);
+  const middle = createBall({ id: "middle", x: world.player.x, y: world.player.y, mass: 500 });
+  const leaf = createBall({ id: "leaf", x: world.player.x, y: world.player.y, mass: 100 });
+  world.bots = [middle, leaf];
+  world.consumeBalls();
+  assert.equal(world.player.mass, 2600);
+  assert.equal(world.score, 600);
+  assert.equal(world.eatenBalls, 2);
+  assert.equal(world.bots.length, 0);
+  assert.equal(world.events.filter(event => event.type === "eat").length, 2);
+});
+
 test("边界限制有效，斜向运动不比水平方向快", () => {
   const a = createBall({ id: "a", x: 100, y: 100, mass: 36 });
   const b = createBall({ id: "b", x: 100, y: 100, mass: 36 });
@@ -89,6 +124,41 @@ test("边界限制有效，斜向运动不比水平方向快", () => {
   a.x = a.radius;
   moveBall(a, { x: -1, y: 0 }, 1, CONFIG.world);
   assert.equal(a.x, a.radius);
+});
+
+test("clamp 边界清除向外速度，bounce 边界反转速度并应用恢复系数", () => {
+  const clamped = createBall({ id: "clamped", x: -20, y: -20, mass: 36 });
+  clamped.vx = -90;
+  clamped.vy = -70;
+  clamped.impulseX = -40;
+  clamped.impulseY = -30;
+  resolveBallBounds(clamped, CONFIG.world, "clamp", 0.6);
+  assert.deepEqual({ x: clamped.x, y: clamped.y, vx: clamped.vx, vy: clamped.vy,
+    impulseX: clamped.impulseX, impulseY: clamped.impulseY },
+  { x: clamped.radius, y: clamped.radius, vx: 0, vy: 0, impulseX: 0, impulseY: 0 });
+
+  const bounced = createBall({ id: "bounced", x: CONFIG.world.width + 20,
+    y: CONFIG.world.height + 20, mass: 36 });
+  bounced.vx = 100;
+  bounced.vy = 80;
+  bounced.impulseX = 50;
+  bounced.impulseY = 25;
+  resolveBallBounds(bounced, CONFIG.world, "bounce", 0.6);
+  assert.equal(bounced.x, CONFIG.world.width - bounced.radius);
+  assert.equal(bounced.y, CONFIG.world.height - bounced.radius);
+  assert.equal(bounced.vx, -60);
+  assert.equal(bounced.vy, -48);
+  assert.equal(bounced.impulseX, -30);
+  assert.equal(bounced.impulseY, -15);
+});
+
+test("球半径超过地图半尺寸时回到安全中心，避免边界夹取区间反转", () => {
+  const oversized = createBall({ id: "oversized", x: -500, y: -500, mass: 4_000_000 });
+  oversized.vx = 120;
+  oversized.vy = -80;
+  resolveBallBounds(oversized, CONFIG.world, "bounce", 0.6);
+  assert.deepEqual({ x: oversized.x, y: oversized.y, vx: oversized.vx, vy: oversized.vy },
+    { x: CONFIG.world.width / 2, y: CONFIG.world.height / 2, vx: 0, vy: 0 });
 });
 
 test("暂停不推进模拟；重开重置本局数据", () => {
@@ -303,8 +373,9 @@ test("动态 AI 生成三种体型，并且整个球体位于视野及其缓冲�
     const bot = world.createBot(0, role);
     assert.ok(bot);
     assert.equal(outsideView(bot, world.view), true);
-    if (role === "forager") assert.ok(bot.mass < 450 / CONFIG.rules.eatMassRatio);
-    if (role === "hunter") assert.ok(bot.mass > 450 * CONFIG.rules.eatMassRatio);
+    const playerRadius = Math.sqrt(450) * CONFIG.rules.radiusScale;
+    if (role === "forager") assert.ok(bot.radius * CONFIG.rules.eatRadiusRatio < playerRadius);
+    if (role === "hunter") assert.ok(bot.radius > playerRadius * CONFIG.rules.eatRadiusRatio);
   }
 });
 

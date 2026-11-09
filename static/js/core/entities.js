@@ -31,13 +31,57 @@ export function growBall(ball, mass) {
   ball.speed = speedForMass(ball.mass);
 }
 
+/** 吞噬体型优势的唯一判定；距离和完全包含由 canEat 继续检查。 */
+export function hasEatSizeAdvantage(eater, prey) {
+  return eater.radius > prey.radius * CONFIG.rules.eatRadiusRatio;
+}
+
 /** 相同规则用于玩家和 AI，吞噬判断与绘制效果相互独立。 */
 export function canEat(eater, prey) {
   // 同一控制者的分身只能走合体规则，不能互相吞噬、刷分。
   if (eater.ownerId === prey.ownerId) return false;
-  if (!eater.alive || !prey.alive || eater.mass < prey.mass * CONFIG.rules.eatMassRatio) return false;
-  const threshold = eater.radius - prey.radius * CONFIG.rules.overlapFactor;
-  return distanceSquared(eater, prey) < threshold ** 2;
+  if (!eater.alive || !prey.alive || !hasEatSizeAdvantage(eater, prey)) return false;
+  return distanceSquared(eater, prey) < (eater.radius - prey.radius) ** 2;
+}
+
+/**
+ * 所有位置修正的唯一入口。clamp 夹住并清除向外速度；bounce 反转速度并乘恢复系数。
+ * 半径大到超过地图半宽时仍返回安全中心，保证不会出现 min > max 的无效值。
+ */
+export function resolveBallBounds(ball, bounds, policy = CONFIG.rules.boundaryPolicy,
+  restitution = CONFIG.rules.boundaryRestitution) {
+  const fixAxis = (positionKey, velocityKey, impulseKey, size) => {
+    if (ball.radius * 2 >= size) {
+      ball[positionKey] = size / 2;
+      ball[velocityKey] = 0;
+      if (impulseKey && impulseKey in ball) ball[impulseKey] = 0;
+      return;
+    }
+    const min = ball.radius;
+    const max = size - ball.radius;
+    if (ball[positionKey] < min) {
+      ball[positionKey] = min;
+      if (policy === "bounce" && ball[velocityKey] < 0) {
+        ball[velocityKey] = -ball[velocityKey] * restitution;
+        if (impulseKey && impulseKey in ball && ball[impulseKey] < 0) ball[impulseKey] *= -restitution;
+      } else if (ball[velocityKey] < 0) {
+        ball[velocityKey] = 0;
+        if (impulseKey && impulseKey in ball) ball[impulseKey] = 0;
+      }
+    } else if (ball[positionKey] > max) {
+      ball[positionKey] = max;
+      if (policy === "bounce" && ball[velocityKey] > 0) {
+        ball[velocityKey] = -ball[velocityKey] * restitution;
+        if (impulseKey && impulseKey in ball && ball[impulseKey] > 0) ball[impulseKey] *= -restitution;
+      } else if (ball[velocityKey] > 0) {
+        ball[velocityKey] = 0;
+        if (impulseKey && impulseKey in ball) ball[impulseKey] = 0;
+      }
+    }
+  };
+  fixAxis("x", "vx", "impulseX", bounds.width);
+  fixAxis("y", "vy", "impulseY", bounds.height);
+  return ball;
 }
 
 export function moveBall(ball, direction, dt, bounds, speedMultiplier = 1) {
@@ -50,8 +94,9 @@ export function moveBall(ball, direction, dt, bounds, speedMultiplier = 1) {
   // 弹射独立于普通移动速度，指数衰减；使用积分使不同步长下的距离一致。
   const decay = Math.exp(-CONFIG.split.launchDecay * dt);
   const impulseTime = (1 - decay) / CONFIG.split.launchDecay;
-  ball.x = clamp(ball.x + ball.vx * dt + ball.impulseX * impulseTime, ball.radius, bounds.width - ball.radius);
-  ball.y = clamp(ball.y + ball.vy * dt + ball.impulseY * impulseTime, ball.radius, bounds.height - ball.radius);
+  ball.x += ball.vx * dt + ball.impulseX * impulseTime;
+  ball.y += ball.vy * dt + ball.impulseY * impulseTime;
   ball.impulseX *= decay;
   ball.impulseY *= decay;
+  resolveBallBounds(ball, bounds);
 }

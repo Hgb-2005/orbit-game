@@ -1,5 +1,5 @@
 import { CONFIG } from "../config.js";
-import { clamp, createBall, distanceSquared, growBall } from "./entities.js";
+import { createBall, distanceSquared, growBall, resolveBallBounds } from "./entities.js";
 
 /** 球群摘要只用于镜头、HUD 和技能预算；碰撞始终使用每个分身的真实质量。 */
 export function summarizeCells(cells, fallback) {
@@ -43,8 +43,9 @@ export function splitCells(cells, direction, bounds, nextId, maxCells = CONFIG.s
     child.impulseX = dx * CONFIG.split.launchSpeed;
     child.impulseY = dy * CONFIG.split.launchSpeed;
     // 很短的初始偏移给弹射一个明确方向，剩余距离由移动积分完成。
-    child.x = clamp(source.x + dx * source.radius * 0.65, child.radius, bounds.width - child.radius);
-    child.y = clamp(source.y + dy * source.radius * 0.65, child.radius, bounds.height - child.radius);
+    child.x = source.x + dx * source.radius * 0.65;
+    child.y = source.y + dy * source.radius * 0.65;
+    resolveBallBounds(child, bounds);
     source.mergeRemaining = CONFIG.split.mergeDelay;
     child.mergeRemaining = CONFIG.split.mergeDelay;
     children.push(child);
@@ -54,8 +55,7 @@ export function splitCells(cells, direction, bounds, nextId, maxCells = CONFIG.s
 }
 
 export function clampCell(cell, bounds) {
-  cell.x = clamp(cell.x, cell.radius, bounds.width - cell.radius);
-  cell.y = clamp(cell.y, cell.radius, bounds.height - cell.radius);
+  resolveBallBounds(cell, bounds);
 }
 
 /** 冷却前分身互相避让；两球均可合体时靠拢，足够接近后按质量加权合并。 */

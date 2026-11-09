@@ -3,7 +3,7 @@ export const CONFIG = Object.freeze({
   world: { width: 3200, height: 2200 },
   player: { initialMass: 36, baseSpeed: 220, minimumSpeed: 65, protectionSeconds: 3 },
   food: { count: 560, mass: 1, radius: 3.3, refillInterval: 0.3 },
-  bots: { count: 13, respawnDelay: 4, thinkInterval: 0.24 },
+  bots: { count: 13, respawnDelay: 4, thinkInterval: 0.24, targetMemorySeconds: 3 },
   survival: { duration: 300, initialLives: 3, respawnProtection: 3 },
   difficulty: { refreshInterval: 8, spawnPadding: 100, maxReferenceMass: 2000 },
   // 保留旧配置字段供旧存档/测试读取，但 Shift 不再触发冲刺。
@@ -19,7 +19,8 @@ export const CONFIG = Object.freeze({
     hunterGroups: 2, hunterMaxCells: 2, hunterCooldown: 14,
   },
   milestones: [300, 800, 1500, 3000, 5000, 8000],
-  rules: { radiusScale: 3, eatMassRatio: 1.28, overlapFactor: 0.35 },
+  // 吞噬只比较真实半径：达到 1.18 倍仍不够，必须严格大于且小球完全位于大球内部。
+  rules: { radiusScale: 3, eatRadiusRatio: 1.18, boundaryPolicy: "clamp", boundaryRestitution: 0.6 },
   simulation: { step: 1 / 60, maxFrameTime: 0.1 },
   music: { tempo: 76, defaultVolume: 0.3, outputGain: 0.65, lookAhead: 0.16, timerInterval: 50 },
   effects: { volume: 0.28, maxVoices: 12, globalInterval: 0.045, foodInterval: 0.14 },

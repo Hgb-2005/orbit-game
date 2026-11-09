@@ -20,13 +20,13 @@ export class World {
     this.reset();
   }
 
-  reset(viewSize = { width: 900, height: 650 }, mode = "classic", drill = "split") {
+  reset(viewSize = { width: 900, height: 650 }, mode = "classic", drill = "split", options = {}) {
     this.mode = ["survival", "practice"].includes(mode) ? mode : "classic";
     this.survival = this.mode === "survival" ? new SurvivalRound() : null;
     this.practice = this.mode === "practice" ? new PracticeCourse(drill) : null;
     this.stats = new RoundStats();
     this.regrouping = false;
-    this.botDifficulty = "standard";
+    this.botDifficulty = Object.hasOwn(BOT_SKILLS, options.botDifficulty) ? options.botDifficulty : "standard";
     this.result = null;
     this.nextId = 0;
     this.elapsed = 0;
@@ -155,6 +155,9 @@ export class World {
     });
     bot.thinkTimer = this.random() * CONFIG.bots.thinkInterval;
     bot.role = role;
+    bot.targetId = null;
+    bot.targetKind = null;
+    bot.targetUntil = 0;
     return bot;
   }
 
@@ -358,7 +361,9 @@ export class World {
         return ratio(a) - ratio(b);
       })[0];
       const bot = this.createBot(Math.floor(this.random() * BOT_NAMES.length), role);
-      if (bot) this.bots.push(bot);
+      if (bot) {
+        this.bots.push(bot);
+      }
     }
   }
 
@@ -376,7 +381,9 @@ export class World {
     const { index } = candidates[0];
     const oldBot = this.bots[index];
     const replacement = this.createBot(Math.floor(this.random() * BOT_NAMES.length), oldBot.role);
-    if (replacement) this.bots[index] = replacement;
+    if (replacement) {
+      this.bots[index] = replacement;
+    }
   }
 
   consumeFood() {
@@ -407,13 +414,15 @@ export class World {
 
   consumeBalls() {
     if (this.gameOver) return;
-    // 大球优先判断；已经被吃的球立即失活，避免同一帧重复加分。
-    const balls = [...this.playerCells, ...this.bots].sort((a, b) => b.mass - a.mass);
+    const started = globalThis.performance?.now?.() ?? Date.now();
+    // 先收集候选，再原子提交。遍历顺序只用来稳定地选择捕食者，不会在查询中途改实体。
+    const balls = [...this.playerCells, ...this.bots].filter(ball => ball.alive)
+      .sort((a, b) => b.mass - a.mass || String(a.id).localeCompare(String(b.id)));
     this.ballGrid.build(balls);
     const order = new Map(balls.map((ball, index) => [ball, index]));
     const remaining = new Map();
     for (const ball of balls) if (ball.alive) remaining.set(ball.ownerId, (remaining.get(ball.ownerId) ?? 0) + 1);
-    const respawns = [];
+    const claims = new Map();
     for (const eater of balls) {
       const candidates = this.ballGrid.queryCircle(eater.x, eater.y, eater.radius + 1)
         .sort((a, b) => order.get(a) - order.get(b));
@@ -422,33 +431,43 @@ export class World {
         if (this.practice && prey.isPlayer) continue;
         if (this.isProtected(eater) || this.isProtected(prey)) continue;
         if (!canEat(eater, prey)) continue;
-        prey.alive = false;
-        growBall(eater, prey.mass);
-        remaining.set(prey.ownerId, remaining.get(prey.ownerId) - 1);
-        if (eater.isPlayer) {
-          this.score += Math.round(prey.mass);
-          this.eatenBalls++;
-          this.events.push({ type: "eat", x: prey.x, y: prey.y, color: prey.color, mass: prey.mass });
-          this.stats.observe(this.playerCells);
-        }
-        if (prey.isPlayer) {
-          this.killer = eater.name;
-          if (remaining.get(prey.ownerId) === 0) this.stats.death(this.elapsed, 'eaten', eater.name, prey.mass);
-          if (!this.survival || remaining.get(prey.ownerId) > 0) {
-            this.events.push({ type: "celllost", x: prey.x, y: prey.y, color: prey.color, mass: prey.mass });
-          } else this.stats.record([{ type: "celllost" }]);
-        }
-        if (this.survival && remaining.get(prey.ownerId) === 0) {
-          const victim = this.survival.recordDeath(prey.ownerId, eater.ownerId, this.elapsed);
-          if (victim) {
-            this.events.push({ type: "life", ownerId: eater.ownerId, isPlayer: eater.isPlayer,
-              lives: this.survival.roster.get(eater.ownerId)?.lives, victim: prey.name });
-            if (victim.lives > 0) respawns.push(victim);
-            else this.events.push({ type: "eliminated", ownerId: victim.ownerId, isPlayer: victim.isPlayer, name: victim.name });
-          }
+        // 同一猎物只接受质量最高、ID 稳定的第一个合法捕食者。
+        if (!claims.has(prey.id)) claims.set(prey.id, { eater, prey, mass: prey.mass });
+      }
+    }
+    // A 吃 B、B 同帧吃 C 时只提交更外层的 A 吃 B；已经被吃的 B 不能再获得质量或击杀。
+    const preyIds = new Set(claims.keys());
+    const settled = [...claims.values()].filter(claim => !preyIds.has(claim.eater.id))
+      .sort((a, b) => order.get(a.eater) - order.get(b.eater));
+    for (const claim of settled) claim.prey.alive = false;
+    for (const claim of settled) growBall(claim.eater, claim.mass);
+
+    const respawns = [];
+    for (const { eater, prey, mass } of settled) {
+      remaining.set(prey.ownerId, remaining.get(prey.ownerId) - 1);
+      if (eater.isPlayer) {
+        this.score += Math.round(mass);
+        this.eatenBalls++;
+        this.events.push({ type: "eat", x: prey.x, y: prey.y, color: prey.color, mass });
+      }
+      if (prey.isPlayer) {
+        this.killer = eater.name;
+        if (remaining.get(prey.ownerId) === 0) this.stats.death(this.elapsed, 'eaten', eater.name, mass);
+        if (!this.survival || remaining.get(prey.ownerId) > 0) {
+          this.events.push({ type: "celllost", x: prey.x, y: prey.y, color: prey.color, mass });
+        } else this.stats.record([{ type: "celllost" }]);
+      }
+      if (this.survival && remaining.get(prey.ownerId) === 0) {
+        const victim = this.survival.recordDeath(prey.ownerId, eater.ownerId, this.elapsed);
+        if (victim) {
+          this.events.push({ type: "life", ownerId: eater.ownerId, isPlayer: eater.isPlayer,
+            lives: this.survival.roster.get(eater.ownerId)?.lives, victim: prey.name });
+          if (victim.lives > 0) respawns.push(victim);
+          else this.events.push({ type: "eliminated", ownerId: victim.ownerId, isPlayer: victim.isPlayer, name: victim.name });
         }
       }
     }
+    if (settled.length && this.playerCells.some(cell => cell.alive)) this.stats.observe(this.playerCells);
     this.lastPlayer = this.player;
     this.playerCells = this.playerCells.filter(cell => cell.alive);
     if (!this.survival && !this.playerCells.length) {
@@ -461,6 +480,7 @@ export class World {
       if (this.survival.roster.get("player").lives <= 0) this.finishSurvival("eliminated");
       else if ([...this.survival.roster.values()].filter(owner => owner.lives > 0).length === 1) this.finishSurvival("last-survivor");
     }
+    this.lastCollisionMs = (globalThis.performance?.now?.() ?? Date.now()) - started;
   }
 
   respawnOwner(owner) {
@@ -468,6 +488,9 @@ export class World {
     const ball = createBall({ ...position, id: `respawn-${this.nextId++}`, ownerId: owner.ownerId,
       mass: owner.initialMass, name: owner.name, color: owner.color, isPlayer: owner.isPlayer });
     ball.role = owner.role;
+    ball.targetId = null;
+    ball.targetKind = null;
+    ball.targetUntil = 0;
     this.botSplitCooldowns.delete(owner.ownerId);
     if (owner.isPlayer) {
       this.playerCells = [ball];

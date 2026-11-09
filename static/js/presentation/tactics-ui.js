@@ -125,7 +125,7 @@ export class TacticsUI {
     }
     for (const kind of ['split', 'spore']) {
       const reason = abilityReason(snapshot, kind);
-      $(`${kind}-hint`).textContent = reason || (kind === 'split' ? '右键 / Q · 分裂不扣分' : '长按连吐 · 喂刺 5 颗反击');
+      $(`${kind}-hint`).textContent = reason || (kind === 'split' ? '右键 / Q / W · 分裂不扣分' : '长按连吐 · 喂刺 5 颗反击');
     }
     const showMetrics = $('performance-toggle').checked;
     $('performance-status').hidden = !showMetrics;
@@ -133,7 +133,9 @@ export class TacticsUI {
     if (showMetrics && now - this.lastMetricAt > 500) {
       this.lastMetricAt = now;
       const metrics = this.renderer.metrics.snapshot();
-      $('performance-status').textContent = metrics ? `${Math.round(metrics.fps)} FPS · Canvas P95 ${metrics.drawP95.toFixed(1)} ms` : '开始游戏后采样性能';
+      $('performance-status').textContent = metrics ?
+        `${Math.round(metrics.fps)} FPS · Sim ${metrics.simulationMs.toFixed(2)} ms · Col ${metrics.collisionMs.toFixed(2)} ms · ${metrics.cellCount} 球 / ${metrics.aiCount} AI / ${metrics.aliveCount} 存活` :
+        '开始游戏后采样性能';
     }
     const extraHeight = [...document.querySelectorAll('.tactical-hud, .assist-settings, .team-bot-status')]
       .reduce((total, node) => total + (node.hidden ? 0 : node.offsetHeight), 0);

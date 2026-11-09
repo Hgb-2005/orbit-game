@@ -1,5 +1,6 @@
 """团队人机的协作意图；只生成普通输入，不直接修改质量或传送位置。"""
 import math
+from .rules import has_eat_advantage
 
 
 def distance(a, b):
@@ -41,7 +42,7 @@ def cooperate(owner, cells, world, enemies, threat):
     # 逃生优先于标点。队友能吃掉追击者时才向其靠拢，防止把敌人带给更小的队友。
     if threat:
         enemy = threat[2]
-        shelter = min((c for c in allies if c['mass'] >= enemy['mass'] * 1.28
+        shelter = min((c for c in allies if has_eat_advantage(c, enemy)
                        and distance(bot, c) < 750
                        and sum(a * b for a, b in zip(toward(bot, c), toward(enemy, bot))) > .15),
                       key=lambda c: distance(bot, c), default=None)
@@ -65,7 +66,9 @@ def cooperate(owner, cells, world, enemies, threat):
     command = next((s for s in reversed(signals) if s['kind'] in ('help', 'gather')), None)
     if command:
         # 不把标点当无条件冲锋令：危险目标只观察，不执行，也不主动分裂。
-        unsafe = any(e['mass'] >= weakest * 1.28 and distance(e, command) < e['radius'] + 300 for e in enemies)
+        weakest_cell = min(cells, key=lambda c: c['mass'])
+        unsafe = any(has_eat_advantage(e, weakest_cell) and distance(e, command) < e['radius'] + 300
+                     for e in enemies)
         if not unsafe:
             if receiver and distance(receiver, command) < 180 and distance(bot, command) < 350:
                 return plan(receiver, 'feed', spore=world.elapsed >= owner.get('botFeedAt', 0))

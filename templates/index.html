@@ -9,8 +9,8 @@
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0180">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0180">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0190">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0190">
     </script>
   </head>
   <body>
@@ -196,7 +196,7 @@
                 <span class="joystick-thumb"></span><span class="joystick-caption">移动</span>
               </div>
               <!-- renderer.js 只绘制这个画布；覆盖层使用 HTML，便于键盘访问。 -->
-              <canvas id="game-canvas" aria-label="微光球场：鼠标或 WASD 移动，长按鼠标左键或 E 连吐孢子，鼠标右键或 Q 分身，按住 C 聚拢分身，喂固定绿色刺球五颗孢子可发射反击刺，空格暂停，F 切换专注模式。" tabindex="0">
+              <canvas id="game-canvas" aria-label="微光球场：鼠标或方向键移动，长按鼠标左键或 E 连吐孢子，鼠标右键、Q 或 W 分身，按住 C 聚拢分身，喂固定绿色刺球五颗孢子可发射反击刺，空格暂停，F 切换专注模式。" tabindex="0">
               </canvas>
               <div class="arena-corner">
                 <span class="live-mark">
@@ -233,8 +233,8 @@
               </div>
               <div id="ability-panel" class="ability-panel" hidden>
                 <div class="ability-card">
-                  <button id="split-button" class="sprint-button" type="button" title="朝移动方向分身：单球质量至少 72，最多 8 个分身，10 秒后靠拢自动合体；也可按 Q。" data-state="low">
-                    <span class="ability-main"><span class="ability-symbol" aria-hidden="true">◉</span><span id="split-label">质量不足</span><kbd>右键 / Q</kbd></span>
+                  <button id="split-button" class="sprint-button" type="button" title="朝移动方向分身：单球质量至少 72，最多 8 个分身，10 秒后靠拢自动合体；也可按 Q 或 W。" data-state="low">
+                    <span class="ability-main"><span class="ability-symbol" aria-hidden="true">◉</span><span id="split-label">质量不足</span><kbd>右键 / Q / W</kbd></span>
                     <span class="sprint-track"><span id="split-progress"></span></span>
                   </button>
                   <span id="split-hint" class="ability-hint">单球 ≥ 72 · 分裂不扣分</span>
@@ -249,11 +249,11 @@
                 <button id="regroup-button" class="regroup-button" type="button" aria-pressed="false" title="按住 C 或此按钮向球群中心聚拢；合体仍需等待 10 秒冷却。" disabled>
                   <span id="regroup-label">按住聚拢</span><span>保留合体冷却</span><kbd>C</kbd>
                 </button>
-                <div class="cell-status"><strong id="cell-count">1 / 8 分身</strong><span class="group-mass">总质量 <b id="group-mass">36</b></span><span id="cell-quality">最大 36 · 最小 36</span><span id="merge-status">长大后右键分身</span></div>
+                <div class="cell-status"><strong id="cell-count">1 / 8 分身</strong><span class="group-mass">总质量 <b id="group-mass">36</b></span><span id="cell-quality">最大 36 · 最小 36</span><span id="merge-status">长大后右键 / Q / W 分身</span></div>
               </div>
               <div id="game-overlay" class="game-overlay">
                 <div class="overlay-card">
-                  <div class="release-badge">V0.18.0 <span>好友分享 · 循序训练 · 复盘建议</span></div>
+                  <div class="release-badge">V0.19.0 <span>阶段 0 · 稳定基准 · 三档人机</span></div>
                   <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
                     <span>
                     </span>
@@ -567,7 +567,7 @@
                 </p>
               </div>
               <div class="keyboard-tips">
-                <span><kbd>右键 / Q</kbd> 分身 · 10s 后合体</span>
+                <span><kbd>右键 / Q / W</kbd> 分身 · 10s 后合体</span>
                 <span><kbd>按住 C</kbd> 聚拢分身 · 松开恢复移动</span>
                 <span><kbd>长按左键 / E</kbd> 连吐孢子 · 喂刺 5 颗发射反击</span>
                 <span><kbd>F</kbd> 专注</span>
@@ -604,7 +604,7 @@
             <i>
               /
             </i>
-            V.0160
+            V.0190
           </span>
         </footer>
         <noscript>

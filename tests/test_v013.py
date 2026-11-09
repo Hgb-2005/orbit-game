@@ -7,7 +7,7 @@ from pathlib import Path
 from server import create_app
 from server.database import save_record, read_record, save_custom_record, get_db
 from server.game.ai import decide, avoid_spikes, PROFILES
-from server.game.entities import ball, grow
+from server.game.entities import ball, grow, keep_inside
 from server.game.rules import RoomRules
 from server.game.world import MultiplayerWorld
 from server.multiplayer import RoomManager
@@ -146,17 +146,32 @@ class CustomRulesTests(unittest.TestCase):
 
 
 class TacticalBotTests(unittest.TestCase):
+    def test_boundary_policy_clamps_or_bounces_without_escaping_map(self):
+        clamped = ball("clamp", {"ownerId": "p", "name": "甲", "color": "#fff"}, {"x": -20, "y": -20})
+        clamped.update(vx=-90, vy=-70, impulseX=-40, impulseY=-30)
+        keep_inside(clamped, policy="clamp", restitution=.6)
+        self.assertEqual((clamped["x"], clamped["y"]), (clamped["radius"], clamped["radius"]))
+        self.assertEqual((clamped["vx"], clamped["vy"], clamped["impulseX"], clamped["impulseY"]), (0, 0, 0, 0))
+
+        bounced = ball("bounce", {"ownerId": "p", "name": "甲", "color": "#fff"}, {"x": 3220, "y": 2220})
+        bounced.update(vx=100, vy=80, impulseX=50, impulseY=25)
+        keep_inside(bounced, policy="bounce", restitution=.6)
+        self.assertEqual((bounced["x"], bounced["y"]),
+                         (3200 - bounced["radius"], 2200 - bounced["radius"]))
+        self.assertEqual((bounced["vx"], bounced["vy"], bounced["impulseX"], bounced["impulseY"]),
+                         (-60, -48, -30, -15))
+
     def test_standard_attacks_safely_and_casual_does_not_split(self):
         for level in PROFILES:
             w = match(level)
             plan = decide(w.players["bot"], w.cells["bot"], w)
             self.assertGreater(plan["x"], 0)
-            self.assertEqual(plan["split"], level != "casual")
+            self.assertEqual(plan["split"], level == "challenge")
             w.update(1 / 30)
-            self.assertEqual(len(w.cells["bot"]), 1 if level == "casual" else 2)
+            self.assertEqual(len(w.cells["bot"]), 2 if level == "challenge" else 1)
 
     def test_path_spikes_cancel_split_and_cause_side_steering(self):
-        w = match()
+        w = match("challenge")
         w.spikes = [{"x": 940, "y": 550, "radius": 58}]
         bot = w.cells["bot"][0]
         plan = decide(w.players["bot"], [bot], w)

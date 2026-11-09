@@ -1,5 +1,5 @@
 import { CONFIG } from "../config.js";
-import { clamp, distanceSquared } from "../core/entities.js";
+import { clamp, distanceSquared, hasEatSizeAdvantage } from "../core/entities.js";
 
 /** 缩放只改变文字详略，不改变质量、危险判定或碰撞规则。 */
 export function describeBallLabel(ball, snapshot, zoom) {
@@ -13,8 +13,8 @@ export function describeBallLabel(ball, snapshot, zoom) {
     return { text: `${mass} · ${detail}`, priority: 3, dangerous: false };
   }
   if (ball.isAlly) return { text: `${mass} · 队友`, priority: 2, dangerous: false };
-  const dangerous = snapshot.playerCells.some(cell => ball.mass >= cell.mass * CONFIG.rules.eatMassRatio);
-  const edible = snapshot.playerCells.some(cell => cell.mass >= ball.mass * CONFIG.rules.eatMassRatio);
+  const dangerous = snapshot.playerCells.some(cell => hasEatSizeAdvantage(ball, cell));
+  const edible = snapshot.playerCells.some(cell => hasEatSizeAdvantage(cell, ball));
   const distant = snapshot.playerCells.every(cell => distanceSquared(ball, cell) > CONFIG.labels.detailDistance ** 2);
   const compact = zoom < CONFIG.labels.detailZoom && distant;
   return { text: compact ? mass : `${mass} · ${protectedBall ? "保护中" : dangerous ? "注意避开" : edible ? "可以吞噬" : "势均力敌"}`,

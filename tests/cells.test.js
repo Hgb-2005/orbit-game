@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { CONFIG } from "../static/js/config.js";
 import { canEat, createBall, growBall } from "../static/js/core/entities.js";
 import { splitCells, summarizeCells, updateCellGroup } from "../static/js/core/cells.js";
-import { chooseBotDirection } from "../static/js/core/ai.js";
+import { BOT_SKILLS, chooseBotDirection } from "../static/js/core/ai.js";
 import { World } from "../static/js/core/world.js";
 import { LocalSession } from "../static/js/session.js";
 import { Camera } from "../static/js/camera.js";
@@ -97,7 +97,56 @@ test("同一控制者的分身不能互吃或刷分，AI 也忽略自己的分�
   const bot = createBall({ id: "h1", ownerId: "hunter", mass: 300, x: 100, y: 100 });
   const sibling = createBall({ id: "h2", ownerId: "hunter", mass: 30, x: 170, y: 100 });
   world.bots = [bot, sibling];
-  assert.deepEqual(chooseBotDirection(bot, { ...world, protectionRemaining: 3 }), { x: 0, y: 0 });
+  world.botDifficulty = "casual";
+  world.foods = [];
+  const direction = chooseBotDirection(bot, world);
+  assert.ok(Math.hypot(direction.x, direction.y) > .9);
+  assert.notEqual(bot.targetId, sibling.id);
+});
+
+test("三档 AI 保持相同物理参数，但普通人机会追逃、休闲档只觅食", () => {
+  const makeWorld = difficulty => {
+    const bot = createBall({ id: "bot", mass: 300, x: 1000, y: 1000 });
+    const threat = createBall({ id: "threat", mass: 900, x: 1200, y: 1000, isPlayer: true });
+    return { bot, world: {
+      botDifficulty: difficulty, playerCells: [threat], bots: [bot],
+      foods: [{ id: "food", x: bot.x, y: bot.y - 180 }], spikes: [],
+      bounds: { width: 3200, height: 2200 }, elapsed: 1, protectionRemaining: 0,
+      isProtected: () => false,
+    } };
+  };
+  const casual = makeWorld("casual");
+  const standard = makeWorld("standard");
+  const challenge = makeWorld("challenge");
+  assert.ok(chooseBotDirection(casual.bot, casual.world).y < -.5);
+  assert.ok(chooseBotDirection(standard.bot, standard.world).x < -.5);
+  assert.ok(chooseBotDirection(challenge.bot, challenge.world).x < -.5);
+  assert.equal(casual.bot.mass, standard.bot.mass);
+  assert.equal(standard.bot.mass, challenge.bot.mass);
+  assert.ok(BOT_SKILLS.challenge.reaction < BOT_SKILLS.standard.reaction);
+  assert.ok(BOT_SKILLS.standard.reaction < BOT_SKILLS.casual.reaction);
+  assert.ok(BOT_SKILLS.challenge.maxCells > BOT_SKILLS.standard.maxCells);
+});
+
+test("AI 在记忆窗口内保持目标，超时后按当前距离重新选目标", () => {
+  const makeScene = () => {
+    const bot = createBall({ id: "bot", mass: 300, x: 1000, y: 1000 });
+    const remembered = createBall({ id: "remembered", mass: 36, x: 1000, y: 650, isPlayer: true });
+    const closer = createBall({ id: "closer", mass: 36, x: 1100, y: 1000, isPlayer: true });
+    return { bot, remembered, closer, world: {
+      botDifficulty: "standard", playerCells: [remembered, closer], bots: [bot], foods: [], spikes: [],
+      bounds: { width: 3200, height: 2200 }, elapsed: 2, protectionRemaining: 0,
+      isProtected: () => false,
+    } };
+  };
+  const active = makeScene();
+  Object.assign(active.bot, { targetKind: "prey", targetId: "remembered", targetUntil: 3 });
+  assert.ok(chooseBotDirection(active.bot, active.world).y < -.5);
+
+  const expired = makeScene();
+  Object.assign(expired.bot, { targetKind: "prey", targetId: "remembered", targetUntil: 1 });
+  assert.ok(chooseBotDirection(expired.bot, expired.world).x > .5);
+  assert.equal(expired.bot.targetId, "closer");
 });
 
 test("按每个分身自己的质量判断吞噬，总质量不能用于吞噬大于分身的敌人", () => {
@@ -269,6 +318,7 @@ test("镜头按整个球群的质心和范围缩放，球群分散后仍包含�
 
 test("追猎者分裂有控制者配额，分身不增加 AI 名额，冷却不会重复分裂", () => {
   const world = emptyWorld();
+  world.botDifficulty = "challenge";
   world.bots = [];
   // 本项只验证分裂配额；避刺策略另有固定场景测试，不让随机刺球阻挡追击路径。
   world.spikes = [];
@@ -277,20 +327,24 @@ test("追猎者分裂有控制者配额，分身不增加 AI 名额，冷却不�
     hunter.role = "hunter";
     const prey = createBall({ id: `prey${i}`, mass: 40, x: hunter.x + 140, y: 300 });
     prey.role = "forager";
-    world.bots.push(hunter, prey);
+    world.bots.push(hunter);
+    world.playerCells.push(prey);
   }
+  // 这些猎物用于验证分裂配额，必须离开新手保护期才能成为 AI 的合法目标。
+  world.elapsed = CONFIG.player.protectionSeconds;
   world.updateBotSplits(step);
-  assert.equal(world.bots.length, 8);
-  assert.equal(world.botGroups.size, 6);
+  // 三个控制者各保留一个本体并生成一个分身，共 6 个球体。
+  assert.equal(world.bots.length, 6);
+  assert.equal(world.botGroups.size, 3);
   assert.equal(world.botGroups.get("hunter0").length, 2);
   assert.equal(world.botGroups.get("hunter1").length, 2);
-  assert.equal(world.botGroups.get("hunter2").length, 1);
+  assert.equal(world.botGroups.get("hunter2").length, 2);
   world.updateBotSplits(step);
-  assert.equal(world.bots.length, 8);
+  assert.equal(world.bots.length, 6);
   // 人为移走同伴后，控制者冷却仍然存在，不能再次弹射。
   world.bots = world.bots.filter(bot => bot.id === bot.ownerId);
   world.updateBotSplits(step);
-  assert.equal(world.bots.length, 6);
+  assert.equal(world.bots.length, 3);
 });
 
 test("新 AI 出生安全距离同时检查远离主球的其他分身", () => {
@@ -340,7 +394,7 @@ test("鼠标目标转换为世界坐标，左右键和 Q/E 请求都进入统一
   listeners.get("canvas:contextmenu")({ preventDefault: () => { menuPrevented = true; } });
   assert.equal(menuPrevented, true);
   // 按下和松开都发生在两个绘制帧之间时，技能仍只消费一次。
-  for (const [name, field] of [["q", "split"]]) {
+  for (const [name, field] of [["q", "split"], ["w", "split"]]) {
     const tap = { ...key, key: name };
     listeners.get("keydown")(tap);
     listeners.get("keyup")(tap);

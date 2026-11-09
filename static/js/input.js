@@ -56,7 +56,8 @@ export class InputController {
       });
     }
     canvas.addEventListener("lostpointercapture", event => this.sporePointers.delete(event.pointerId));
-    const movementKeys = ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"];
+    // W 是分身快捷键，只用方向键或 A/S/D 控制移动，避免误触改写移动方向。
+    const movementKeys = ["arrowup", "arrowdown", "arrowleft", "arrowright", "a", "s", "d"];
     window.addEventListener("keydown", event => {
       if (event.target.closest?.('dialog[open]')) return;
       if (event.ctrlKey || event.altKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
@@ -71,9 +72,9 @@ export class InputController {
         this.keys.add("e");
         if (!event.repeat) this.requestSpore();
       }
-      if (key === "q") {
+      if (key === "q" || key === "w") {
         event.preventDefault();
-        this.keys.add("q");
+        this.keys.add(key);
         if (!event.repeat) this.requestSplit();
       }
       if (key === "c") { event.preventDefault(); this.keys.add("c"); }
@@ -124,7 +125,7 @@ export class InputController {
 
   getInput(screenPosition, view) {
     const aim = this.getAim(screenPosition, view);
-    const split = this.keys.has("q") || this.splitQueued;
+    const split = this.keys.has("q") || this.keys.has("w") || this.splitQueued;
     const spore = this.sporeQueued;
     const sporeHeld = this.buttonSporeHeld || this.sporePointers.size > 0 || this.keys.has("e");
     this.sporeQueued = false;
@@ -152,7 +153,7 @@ export class InputController {
     if (this.mode === "joystick") return { x: 0, y: 0 };
     if (this.mode === "keyboard") {
       const x = Number(this.keys.has("d") || this.keys.has("arrowright")) - Number(this.keys.has("a") || this.keys.has("arrowleft"));
-      const y = Number(this.keys.has("s") || this.keys.has("arrowdown")) - Number(this.keys.has("w") || this.keys.has("arrowup"));
+      const y = Number(this.keys.has("s") || this.keys.has("arrowdown")) - Number(this.keys.has("arrowup"));
       const length = Math.hypot(x, y) || 1;
       return { x: x / length, y: y / length };
     }
