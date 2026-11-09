@@ -4,6 +4,10 @@ import { CombatFeedback, nearestDanger } from "./presentation/combat-feedback.js
 import { RenderQuality } from "./presentation/quality.js";
 import { smoothDisplayRadius } from "./presentation/radius-smoothing.js";
 import { splitProjection, FrameMetrics, SIGNAL_COLORS, SIGNAL_NAMES } from './presentation/tactics.js';
+import { VisualSettings } from "./visual/visual-settings.js";
+import { CanvasBackground } from "./visual/canvas-background.js";
+import { FluidRenderer } from "./visual/fluid-renderer.js";
+import { ParticlePool, PARTICLE_KIND } from "./visual/particle-pool.js";
 
 const THEMES = {
   dark: { background: "#101a17", grid: "#26342b", border: "#586f5e", text: "#d6e0d9", muted: "#718979", player: "#b4efcc", playerInk: "#203d2a", mini: "#15211ce8", miniBorder: "#334539" },
@@ -12,16 +16,15 @@ const THEMES = {
 
 /** Canvas 只读取状态，所有坐标都使用世界坐标，最后由相机统一变换。 */
 export class Renderer {
-  constructor(canvas, camera) {
+  constructor(canvas, camera, visualCanvas = null) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.camera = camera;
+    this.visualCanvas = visualCanvas;
     this.theme = "dark";
     this.width = 1;
     this.height = 1;
-    this.particles = [];
     this.combat = new CombatFeedback();
-    this.trails = [];
     this.trailTimer = 0;
     this.labelObstacles = [];
     this.labelPlacements = [];
@@ -29,6 +32,13 @@ export class Renderer {
     let storage = null;
     try { storage = window.localStorage; } catch { /* 无存储权限仍可调画质。 */ }
     this.quality = new RenderQuality(storage);
+    this.visualSettings = new VisualSettings(storage);
+    this.visuals = this.visualSettings.effective(this.quality.effective);
+    this.background = new CanvasBackground();
+    this.fluidRenderer = new FluidRenderer(visualCanvas);
+    this.particlePool = new ParticlePool(220);
+    this.audio = { level: 0, bass: 0, mid: 0 };
+    this.visualFallbackReason = "";
     this.metrics = new FrameMetrics();
     this.frameMs = 16.67;
     this.previewEnabled = false;
@@ -37,7 +47,9 @@ export class Renderer {
     this.touchQuery = window.matchMedia("(pointer: coarse), (max-width: 760px)");
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas.parentElement);
+    this.unsubscribeVisuals = this.visualSettings.subscribe(() => this.syncVisualSettings());
     this.resize();
+    this.syncVisualSettings();
   }
 
   resize() {
@@ -48,29 +60,41 @@ export class Renderer {
     this.dpr = Math.min(window.devicePixelRatio || 1, this.quality.preset.dpr);
     this.canvas.width = Math.round(this.width * this.dpr);
     this.canvas.height = Math.round(this.height * this.dpr);
+    this.background.resize(this.width, this.height);
+    this.fluidRenderer.resize(this.width, this.height, this.dpr);
   }
 
   addEvents(events) {
     this.combat.add(events);
+    if (this.reducedMotion || this.visuals.particles <= 0) return;
     for (const event of events) {
-      if (!["food", "eat", "sprint", "split", "merge", "celllost", "respawn", "spore", "spore-eat", "spike"].includes(event.type)) continue;
+      if (!["food", "eat", "split", "merge", "celllost", "respawn", "spore", "spore-eat",
+        "spike", "spike-feed", "spike-launch"].includes(event.type)) continue;
       if (event.type === "respawn" && !event.isPlayer) continue;
-      const { particles, perEvent } = this.quality.preset;
-      const count = this.reducedMotion ? 0 : event.type === "food" ? Math.min(4, perEvent) : perEvent;
-      for (let i = 0; i < count; i++) {
-        if (this.particles.length >= particles) this.particles.shift();
-        const angle = Math.random() * Math.PI * 2;
-        const speed = 15 + Math.random() * 55;
-        this.particles.push({ x: event.x, y: event.y, vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed, life: 0.5, color: event.color });
+      const room = Math.max(0, this.visuals.particles - this.particlePool.activeCount);
+      if (!room) break;
+      const color = event.color || (this.theme === "dark" ? "#b4efcc" : "#71b98a");
+      if (event.type === "food" || event.type === "eat" || event.type === "spore-eat") {
+        this.particlePool.burst(event.x, event.y, color,
+          Math.min(room, event.type === "food" ? 3 : 7), PARTICLE_KIND.SWIRL);
+      } else if (event.type === "spore") {
+        this.particlePool.trail(event.x, event.y, color, event.radius || 7, PARTICLE_KIND.TRAIL);
+      } else if (event.type === "spike" || event.type === "spike-feed" || event.type === "spike-launch") {
+        this.particlePool.burst(event.x, event.y, "#8fe1aa",
+          Math.min(room, event.type === "spike-launch" ? 12 : 5), PARTICLE_KIND.SPARK);
+      } else if (event.type === "celllost") {
+        this.particlePool.burst(event.x, event.y, "#ed9f94",
+          Math.min(room, 10), PARTICLE_KIND.SWIRL);
+      } else {
+        this.particlePool.burst(event.x, event.y, color,
+          Math.min(room, event.type === "split" ? 8 : 5), PARTICLE_KIND.BURST);
       }
     }
   }
 
   resetEffects() {
     this.combat.reset();
-    this.particles = [];
-    this.trails = [];
+    this.particlePool.clear();
     this.trailTimer = 0;
     this.displayRadii.clear();
   }
@@ -81,9 +105,39 @@ export class Renderer {
   }
 
   applyQuality() {
-    this.particles = this.particles.slice(-this.quality.preset.particles);
+    this.syncVisualSettings();
     this.combat.rings = this.combat.rings.slice(-this.quality.preset.rings);
     this.resize();
+  }
+
+  syncVisualSettings() {
+    this.visuals = this.visualSettings.effective(this.quality.effective);
+    this.fluidRenderer.setRendererMode(this.visualSettings.values.renderer);
+    this.fluidRenderer.setCustomSkin(this.visuals.skin === "custom" ? this.visuals.customSkin : "");
+    return this.getVisualStatus();
+  }
+
+  setAudioLevel(audio) {
+    const value = typeof audio === "number" ? { level: audio } : audio;
+    this.audio = {
+      level: Math.max(0, Math.min(1, Number(value?.level) || 0)),
+      bass: Math.max(0, Math.min(1, Number(value?.bass) || 0)),
+      mid: Math.max(0, Math.min(1, Number(value?.mid) || 0)),
+    };
+  }
+
+  getVisualStatus() {
+    return {
+      renderer: this.visualSettings.values.renderer,
+      fluid: this.visuals.fluid,
+      active: Boolean(this.fluidRenderer.active && !this.visualFallbackReason),
+      supported: this.fluidRenderer.supported,
+      reason: this.visualFallbackReason || this.fluidRenderer.reason,
+      width: this.width,
+      height: this.height,
+      dpr: this.dpr,
+      effective: this.visuals,
+    };
   }
 
   draw(snapshot, dt, feedback) {
@@ -93,8 +147,28 @@ export class Renderer {
     const { ctx, camera } = this;
     const colors = THEMES[this.theme];
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.fillStyle = colors.background;
-    ctx.fillRect(0, 0, this.width, this.height);
+    ctx.clearRect(0, 0, this.width, this.height);
+    const audio = this.visuals.audioReactive ? this.audio.level : 0;
+    let fluidResult = { drawn: 0, skipped: 0, drawnIds: new Set() };
+    try {
+      fluidResult = this.fluidRenderer.render(snapshot, {
+        camera, theme: this.theme, dpr: this.dpr, width: this.width, height: this.height,
+        settings: this.visuals, displayRadius: ball => this.displayRadius(ball),
+        audio, reducedMotion: this.reducedMotion, drawBalls: this.visuals.fluid,
+      });
+    } catch (error) {
+      // 驱动丢失或着色器异常时立即切回 Canvas，不影响本局推进。
+      this.visualFallbackReason = error instanceof Error ? error.message : String(error);
+      this.fluidRenderer.active = false;
+    }
+    if (!this.fluidRenderer.active) {
+      this.background.draw(ctx, {
+        width: this.width, height: this.height, mode: this.visuals.background,
+        theme: this.theme, time: performance.now() / 1000, camera,
+        audio, reducedMotion: this.reducedMotion,
+      });
+    }
+    const drawnIds = fluidResult.drawnIds ?? new Set();
     ctx.save();
     ctx.translate(this.width / 2, this.height / 2);
     ctx.scale(camera.zoom, camera.zoom);
@@ -126,25 +200,19 @@ export class Renderer {
     this.drawSafeZone(snapshot);
     if (this.previewEnabled) this.drawSplitPreview(snapshot, colors);
 
-    if (snapshot.state === "playing") {
+    if (snapshot.state === "playing" && !this.reducedMotion && this.visuals.trails > 0) {
       this.trailTimer += dt;
-      for (const trail of this.trails) trail.life -= dt;
-      if (snapshot.sprint.active && !this.reducedMotion && this.trailTimer > 0.035) {
+      const interval = this.quality.effective === "smooth" ? .16 : .09;
+      if (this.trailTimer > interval) {
         this.trailTimer = 0;
         for (const cell of snapshot.playerCells) {
-          this.trails.push({ x: cell.x, y: cell.y, radius: cell.radius, life: 0.3 });
+          if (this.particlePool.activeCount >= this.visuals.trails) break;
+          if (Math.hypot(cell.vx || 0, cell.vy || 0) < 14) continue;
+          this.particlePool.trail(cell.x, cell.y, colors.player,
+            this.displayRadius(cell), PARTICLE_KIND.TRAIL);
         }
       }
-      this.trails = this.trails.filter(trail => trail.life > 0);
     }
-    ctx.fillStyle = colors.player;
-    for (const trail of this.trails) {
-      ctx.globalAlpha = Math.max(0, trail.life / 0.3) * 0.16;
-      ctx.beginPath();
-      ctx.arc(trail.x, trail.y, trail.radius * 0.88, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
 
     if (snapshot.regrouping && snapshot.playerCells.length > 1) {
       ctx.save();
@@ -163,22 +231,13 @@ export class Renderer {
     }
     const balls = [...snapshot.bots, ...snapshot.playerCells].filter(ball => ball.alive).sort((a, b) => a.mass - b.mass);
     for (const ball of balls) {
-      if (this.visible(ball)) this.drawBall(ball, snapshot, colors);
+      if (this.visible(ball)) this.drawBall(ball, snapshot, colors, !drawnIds.has(ball.id));
     }
     this.drawCombatRings(snapshot);
     this.drawSignals(snapshot);
 
-    for (const particle of this.particles) {
-      if (snapshot.state === "playing") {
-        particle.life -= dt;
-        particle.x += particle.vx * dt;
-        particle.y += particle.vy * dt;
-      }
-      ctx.globalAlpha = Math.max(0, particle.life / 0.5);
-      ctx.fillStyle = particle.color;
-      ctx.fillRect(particle.x - 1.5, particle.y - 1.5, 3, 3);
-    }
-    this.particles = this.particles.filter(particle => particle.life > 0);
+    this.particlePool.update(dt, snapshot.state === "playing", this.visuals.particles);
+    this.particlePool.draw(ctx, this.visuals.particles);
     ctx.globalAlpha = 1;
     ctx.restore();
     if (snapshot.state === "playing") this.drawDirection(snapshot, colors);
@@ -413,19 +472,21 @@ export class Renderer {
     ctx.strokeRect(0, 0, bounds.width, bounds.height);
   }
 
-  drawBall(ball, snapshot, colors) {
+  drawBall(ball, snapshot, colors, drawFill = true) {
     const { ctx } = this;
     const radius = this.displayRadius(ball);
     const protectedPlayer = snapshot.survival ? snapshot.survival.protectionByOwner[ball.ownerId] > 0 :
       ball.isPlayer && snapshot.protectionRemaining > 0;
     const fill = snapshot.team ? ball.color : ball.isPlayer ? colors.player : ball.color;
     ctx.save();
-    ctx.fillStyle = fill;
-    ctx.globalAlpha = ball.isPlayer ? 1 : 0.88;
-    ctx.beginPath();
-    ctx.arc(ball.x, ball.y, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    if (drawFill) {
+      ctx.fillStyle = fill;
+      ctx.globalAlpha = ball.isPlayer ? 1 : 0.88;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
     if (ball.isAlly || (snapshot.team && ball.isPlayer)) {
       ctx.strokeStyle = snapshot.team.color;
       ctx.lineWidth = (ball.isPlayer ? 2.5 : 1.5) / this.camera.zoom;
@@ -474,6 +535,13 @@ export class Renderer {
     ctx.font = `500 ${Math.max(10, Math.min(19, radius * 0.4))}px 'Microsoft YaHei', sans-serif`;
     ctx.fillText(ball.name, ball.x, ball.y, radius * 1.7);
     ctx.restore();
+  }
+
+  dispose() {
+    this.unsubscribeVisuals?.();
+    this.resizeObserver?.disconnect();
+    this.particlePool.clear();
+    this.fluidRenderer.dispose();
   }
 
   drawBallLabels(balls, snapshot, colors) {

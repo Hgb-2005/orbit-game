@@ -396,6 +396,28 @@ h1 {
   border-block: 1px solid var(--border);
 }
 
+#game-visual,
+#game-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#game-visual {
+  z-index: 0;
+  pointer-events: none;
+}
+
+#game-canvas {
+  z-index: 1;
+  background: transparent;
+}
+
+.canvas-container > :not(canvas) {
+  z-index: 2;
+}
+
 canvas {
   display: block;
   width: 100%;
@@ -1592,6 +1614,122 @@ kbd {
   .history-layout { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .history-list { max-height: 185px; }
   .history-dialog .room-button { min-height: 40px; }
+}
+
+/* 20. v0.20 流体视觉：设置只作用表现层，WebGL 不可用时由主 Canvas 完整接管。 */
+.visual-dialog {
+  width: min(920px, calc(100vw - 24px));
+  max-height: calc(100dvh - 32px);
+  padding: 24px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  overflow-y: auto;
+  box-shadow: 0 20px 80px #0006;
+}
+
+.visual-dialog::backdrop {
+  background: #07100cb8;
+  backdrop-filter: blur(5px);
+}
+
+.visual-heading {
+  position: sticky;
+  top: -24px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0 14px;
+  background: var(--surface);
+}
+
+.visual-heading h2 { margin: 5px 0 0; font-size: 24px; font-weight: 550; }
+.visual-heading .eyebrow { color: var(--accent); font-size: 9px; letter-spacing: 2px; }
+.visual-runtime-status,
+.visual-settings-status {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--muted);
+  font: 10px/1.7 Consolas, "Microsoft YaHei", sans-serif;
+}
+.visual-runtime-status[data-active="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); }
+.visual-settings-status[data-kind="ok"] { color: var(--accent); }
+.visual-settings-status[data-kind="warning"] { color: var(--gold); }
+.visual-settings-status[data-kind="error"] { color: #df9189; border-color: #9d4d47; }
+
+.visual-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.visual-dialog fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--canvas);
+}
+
+.visual-dialog legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.visual-dialog fieldset > label:not(.visual-switch):not(.visual-upload) {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.visual-dialog select,
+.visual-dialog textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 9px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 11px/1.5 Consolas, "Microsoft YaHei", sans-serif;
+}
+.visual-dialog textarea { resize: vertical; }
+.visual-dialog :is(select, textarea, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.visual-dialog input[type="range"] { width: 100%; accent-color: var(--accent); }
+.visual-dialog output { min-width: 35px; color: var(--accent); font: 10px Consolas, monospace; text-align: right; }
+.visual-switch { display: flex; align-items: center; gap: 8px; min-height: 36px; color: var(--text); font-size: 11px; cursor: pointer; }
+.visual-switch input { accent-color: var(--accent); }
+.visual-upload { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 11px; }
+.visual-upload input { min-width: 0; font-size: 10px; }
+.visual-upload span { grid-column: 2; color: var(--soft); font-size: 9px; line-height: 1.5; }
+.visual-note { margin: 10px 0 0; color: var(--soft); font-size: 9px; line-height: 1.7; }
+.visual-json-panel { grid-column: 1 / -1; }
+.visual-json-panel > label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 10px; }
+.visual-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.visual-actions .text-button { margin-left: auto; }
+
+@media (max-width: 760px) {
+  .visual-dialog { padding: 18px; }
+  .visual-heading { top: -18px; }
+  .visual-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .visual-json-panel { grid-column: auto; }
+  .visual-dialog fieldset > label:not(.visual-switch):not(.visual-upload) { grid-template-columns: 76px minmax(0, 1fr) auto; }
+  .visual-upload { grid-template-columns: minmax(0, 1fr); }
+  .visual-upload span { grid-column: auto; }
+  .visual-actions .text-button { margin-left: 0; }
 }
 
 /* v0.17: training follows real game events. */

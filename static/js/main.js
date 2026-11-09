@@ -9,22 +9,26 @@ import { BackgroundMusic } from "./audio/music.js";
 import { SoundEffects } from "./audio/effects.js";
 import { VisualFeedback } from "./presentation/feedback.js";
 import { RemoteSession } from "./network/remote-session.js";
-import { LobbyUI } from "./network/lobby-ui.js?v=0190";
+import { LobbyUI } from "./network/lobby-ui.js?v=0200";
 import { TacticsUI } from './presentation/tactics-ui.js';
 import { HistoryService } from './services/history.js';
 import { HistoryUI } from './presentation/history-ui.js';
+import { VisualAudioAnalyser } from "./visual/audio-visualizer.js";
+import { VisualSettingsUI } from "./visual/visual-settings-ui.js";
 
 const canvas = document.getElementById("game-canvas");
+const visualCanvas = document.getElementById("game-visual");
 const ui = new GameUI();
 const localSession = new LocalSession();
 let session = localSession;
 let remoteSession = null;
 const camera = new Camera();
-const renderer = new Renderer(canvas, camera);
+const renderer = new Renderer(canvas, camera, visualCanvas);
 const input = new InputController(canvas, document.getElementById("touch-joystick"));
 const scores = new ScoreService(record => ui.renderRecord(record));
 const music = new BackgroundMusic(state => ui.renderMusic(state));
 const effects = new SoundEffects(() => music.context, state => ui.renderEffects(state), { supported: music.supported });
+const visualAudio = new VisualAudioAnalyser();
 const feedback = new VisualFeedback();
 const lobby = new LobbyUI(() => remoteSession);
 const tactics = new TacticsUI({ getSession: () => session, canvas, camera, renderer, toast: message => ui.toast(message) });
@@ -37,6 +41,37 @@ const historyUI = new HistoryUI(history, {
   },
   onClose: () => { input.reset(); remoteSession?.resumeInput(); canvas.focus({ preventScroll: true }); },
 });
+let visualSettingsUI = null;
+async function toggleMicrophone(enabled) {
+  if (!enabled) {
+    visualAudio.disconnectMicrophone();
+    return false;
+  }
+  await music.unlock({ force: true });
+  if (!music.context) throw new Error("当前浏览器无法创建音频频谱上下文");
+  await visualAudio.setMicrophone(true, music.context);
+  return true;
+}
+visualSettingsUI = new VisualSettingsUI(renderer.visualSettings, {
+  onOpen: () => {
+    input.reset();
+    if (session instanceof RemoteSession) session.stop();
+    else if (session.state === 'playing') togglePause();
+  },
+  onClose: () => {
+    input.reset();
+    remoteSession?.resumeInput();
+    canvas.focus({ preventScroll: true });
+  },
+  onMicrophone: toggleMicrophone,
+});
+// 设置面板变更后立即刷新 WebGL / Canvas 与效果预算状态；渲染器会先完成同步。
+renderer.visualSettings.subscribe(() => {
+  visualSettingsUI?.setRuntimeStatus(renderer.getVisualStatus());
+});
+visualSettingsUI.setRuntimeStatus(renderer.getVisualStatus());
+// 麦克风授权只在本次页面里由用户主动开启，刷新后不会自动获取权限。
+if (renderer.visualSettings.values.microphone) renderer.visualSettings.update({ microphone: false });
 input.onSkillAttempt = kind => tactics.skillAttempt(kind);
 input.onArenaPointer = event => tactics.pointer(event);
 renderer.theme = ui.theme;
@@ -44,7 +79,9 @@ ui.renderMusic(music.getSnapshot());
 ui.renderEffects(effects.getSnapshot());
 
 function unlockAudio() {
-  void music.unlock({ force: effects.enabled && session.state === "playing" });
+  void music.unlock({ force: effects.enabled && session.state === "playing" }).then(() => {
+    if (music.context) visualAudio.connectMusic(music);
+  });
 }
 
 let accumulator = 0;
@@ -190,7 +227,11 @@ ui.onFocusChange = () => {
 ui.bind({
   start, pause: togglePause, restart, focus: toggleFocus,
   theme: theme => { renderer.theme = theme; },
-  quality: mode => { renderer.setQuality(mode); ui.renderQuality(renderer.quality); },
+  quality: mode => {
+    renderer.setQuality(mode);
+    ui.renderQuality(renderer.quality);
+    visualSettingsUI?.setRuntimeStatus(renderer.getVisualStatus());
+  },
   split: () => { input.requestSplit(); canvas.focus({ preventScroll: true }); },
   spore: () => { input.requestSpore(); canvas.focus({ preventScroll: true }); },
   sporeHold: held => input.setSporeHeld(held),
@@ -273,6 +314,7 @@ function frame(now) {
   }
   camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, dt);
   renderer.aim = input.getAim(camera.worldToScreen(snapshot.player), camera.getView());
+  renderer.setAudioLevel(visualAudio.sample());
   const visualState = feedback.update(snapshot);
   // HUD 限制到 10Hz，避免每个显示帧都触发不必要的 DOM 更新。
   if (now - lastHudUpdate > 100 || ui.lastState !== snapshot.state) {
@@ -305,6 +347,9 @@ window.addEventListener("pagehide", () => {
   scores.flushOnExit();
   music.setGameState("paused");
   effects.setGameState("paused");
+  visualAudio.disconnect();
+  visualSettingsUI?.dispose();
+  renderer.dispose();
   remoteSession?.close();
 });
 window.addEventListener("online", () => { void scores.load(); });

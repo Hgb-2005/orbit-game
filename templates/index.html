@@ -9,8 +9,8 @@
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0190">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0190">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0200">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0200">
     </script>
   </head>
   <body>
@@ -195,7 +195,8 @@
               <div id="touch-joystick" class="touch-joystick" role="group" aria-label="触屏移动摇杆，拖动控制方向" data-active="false">
                 <span class="joystick-thumb"></span><span class="joystick-caption">移动</span>
               </div>
-              <!-- renderer.js 只绘制这个画布；覆盖层使用 HTML，便于键盘访问。 -->
+              <!-- 透明 WebGL 层只画背景与球体材质；主 Canvas 始终负责实体轮廓、HUD、标签和兼容回退。 -->
+              <canvas id="game-visual" aria-hidden="true"></canvas>
               <canvas id="game-canvas" aria-label="微光球场：鼠标或方向键移动，长按鼠标左键或 E 连吐孢子，鼠标右键、Q 或 W 分身，按住 C 聚拢分身，喂固定绿色刺球五颗孢子可发射反击刺，空格暂停，F 切换专注模式。" tabindex="0">
               </canvas>
               <div class="arena-corner">
@@ -253,7 +254,7 @@
               </div>
               <div id="game-overlay" class="game-overlay">
                 <div class="overlay-card">
-                  <div class="release-badge">V0.19.0 <span>阶段 0 · 稳定基准 · 三档人机</span></div>
+                  <div class="release-badge">V0.20.0 <span>阶段 1 · 流体视觉 · Canvas 可回退</span></div>
                   <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
                     <span>
                     </span>
@@ -414,6 +415,7 @@
               </span>
             </div>
             <div class="assist-settings">
+              <button id="visual-open" class="text-button" type="button">视觉设置</button>
               <button id="history-open" class="text-button" type="button">对局记录</button>
               <label><input id="split-preview" type="checkbox"> 分裂方向预览</label>
               <label><input id="performance-toggle" type="checkbox"> 显示性能</label>
@@ -589,6 +591,7 @@
           </aside>
         </div>
         {% include '_history.html' %}
+        {% include '_visual-settings.html' %}
         <footer class="page-footer">
           <span>
             <span class="status-dot">
@@ -604,7 +607,7 @@
             <i>
               /
             </i>
-            V.0190
+            V.0200
           </span>
         </footer>
         <noscript>

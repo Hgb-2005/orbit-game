@@ -1,0 +1,47 @@
+<!-- 视觉表现设置：不修改模拟步长、碰撞判定、网络快照或服务器权威状态。 -->
+<dialog id="visual-settings-dialog" class="visual-dialog" aria-labelledby="visual-settings-title" aria-describedby="visual-runtime-status">
+  <div class="visual-heading">
+    <div><span class="eyebrow">FLUID APPEARANCE</span><h2 id="visual-settings-title">视觉设置</h2></div>
+    <button id="visual-close" class="room-button" type="button" autofocus>关闭</button>
+  </div>
+  <p id="visual-runtime-status" class="visual-runtime-status" role="status">正在初始化视觉效果…</p>
+  <p id="visual-settings-status" class="visual-settings-status" role="status" aria-live="polite">所有改动即时预览并保存在本机浏览器。</p>
+
+  <div class="visual-settings-grid">
+    <fieldset>
+      <legend>渲染与材质</legend>
+      <label>渲染方式<select id="visual-renderer"></select></label>
+      <label class="visual-switch"><input id="visual-fluid" type="checkbox"> 流体球体材质</label>
+      <label>背景<select id="visual-background"></select></label>
+      <label>皮肤<select id="visual-skin"></select></label>
+      <label class="visual-upload">自定义主球贴图<input id="visual-skin-file" type="file" accept="image/png,image/jpeg,image/webp"><span id="visual-skin-file-note">PNG / JPEG / WebP，原图不超过 2 MiB</span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>效果预算</legend>
+      <label>粒子密度<input id="visual-particles" type="range" min="0" max="100" step="1"><output id="visual-particles-value">72%</output></label>
+      <label>拖尾长度<input id="visual-trails" type="range" min="0" max="100" step="1"><output id="visual-trails-value">64%</output></label>
+      <label>流体扰动<input id="visual-distortion" type="range" min="0" max="100" step="1"><output id="visual-distortion-value">48%</output></label>
+      <label class="visual-switch"><input id="visual-glow" type="checkbox"> 边缘光晕</label>
+      <p class="visual-note">低画质会自动压低预算；远距离小球和小于 9 px 的球体使用简化着色。</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>音频联动</legend>
+      <label class="visual-switch"><input id="visual-audio-reactive" type="checkbox"> 音频驱动光晕与流体</label>
+      <label class="visual-switch"><input id="visual-microphone" type="checkbox"> 麦克风频谱</label>
+      <p class="visual-note">音乐联动读取现有合成 BGM 的旁路频谱。麦克风只在点击授权后开启，关闭设置或离开页面即释放轨道。</p>
+    </fieldset>
+
+    <fieldset class="visual-json-panel">
+      <legend>配置分享</legend>
+      <label for="visual-json">视觉设置 JSON</label>
+      <textarea id="visual-json" rows="7" spellcheck="false"></textarea>
+      <div class="visual-actions">
+        <button id="visual-import" class="room-button" type="button">导入</button>
+        <button id="visual-export" class="room-button" type="button">导出文件</button>
+        <button id="visual-reset" class="text-button" type="button">恢复默认</button>
+      </div>
+    </fieldset>
+  </div>
+</dialog>
