@@ -181,6 +181,7 @@ export class Renderer {
     ctx.translate(-camera.x, -camera.y);
     this.drawGrid(snapshot.bounds, colors);
     this.drawHotspots(snapshot, colors);
+    this.drawObstacles(snapshot, colors);
     this.drawSpikes(snapshot, colors);
 
     for (const spore of snapshot.spores || []) {
@@ -442,6 +443,49 @@ export class Renderer {
           -Math.PI / 2 + Math.PI * 2 * spike.charge / CONFIG.spikes.feedCount);
         ctx.stroke();
       }
+      ctx.restore();
+    }
+  }
+
+  /** 实心障碍与球体共用圆形碰撞协议，绘制始终位于食物和球体下方。 */
+  drawObstacles(snapshot, colors) {
+    const obstacles = snapshot.obstacles || [];
+    if (!obstacles.length) return;
+    const { ctx, camera } = this;
+    for (const obstacle of obstacles) {
+      if (!this.visible(obstacle)) continue;
+      ctx.save();
+      const radius = obstacle.radius;
+      ctx.globalAlpha = this.theme === "dark" ? .9 : .82;
+      ctx.fillStyle = obstacle.color || colors.border;
+      ctx.beginPath();
+      ctx.arc(obstacle.x, obstacle.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = .72;
+      ctx.strokeStyle = this.theme === "dark" ? "#b7c8bd" : "#435b4a";
+      ctx.lineWidth = 2.5 / camera.zoom;
+      ctx.stroke();
+
+      // 斜纹和中心点让障碍即使与背景明度接近也不会被误认成可吞噬球体。
+      ctx.save();
+      ctx.clip();
+      ctx.globalAlpha = .12;
+      ctx.strokeStyle = this.theme === "dark" ? "#dce9df" : "#1f3927";
+      ctx.lineWidth = 3 / camera.zoom;
+      ctx.beginPath();
+      for (let offset = -radius * 2; offset < radius * 2; offset += 18 / camera.zoom) {
+        ctx.moveTo(obstacle.x - radius + offset, obstacle.y - radius);
+        ctx.lineTo(obstacle.x + offset, obstacle.y + radius);
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.globalAlpha = .75;
+      ctx.fillStyle = this.theme === "dark" ? "#d8e3dc" : "#2b4434";
+      ctx.beginPath();
+      ctx.arc(obstacle.x, obstacle.y, Math.min(7, radius * .12), 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     }
   }
@@ -732,6 +776,15 @@ export class Renderer {
     ctx.fillRect(viewX, viewY, viewWidth, viewHeight);
     ctx.strokeStyle = colors.miniBorder;
     ctx.strokeRect(viewX, viewY, viewWidth, viewHeight);
+    for (const obstacle of snapshot.obstacles || []) {
+      ctx.fillStyle = obstacle.color || colors.border;
+      ctx.globalAlpha = .9;
+      ctx.beginPath();
+      ctx.arc(x + obstacle.x * sx, y + obstacle.y * sy,
+        Math.max(1.3, Math.min(4, obstacle.radius * sx)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
     ctx.save();
     ctx.strokeStyle = this.theme === "dark" ? "#d7bc77" : "#92752e";
     ctx.fillStyle = ctx.strokeStyle;

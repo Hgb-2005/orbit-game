@@ -1,4 +1,5 @@
 import { CONFIG } from "../config.js";
+import { DEFAULT_MAP, mapIsClear } from "../maps/map-schema.js";
 
 /** 生命属于控制者而非分身；身份、命数和战绩在复活时保留，方便以后由服务端管理。 */
 export class SurvivalRound {
@@ -68,7 +69,7 @@ export class SurvivalRound {
 }
 
 /** 随机候选加固定网格兜底，取离其他球边缘最远的位置；拥挤时仍能立即复活。 */
-export function findRespawnPosition(bounds, mass, cells, random) {
+export function findRespawnPosition(bounds, mass, cells, random, map = DEFAULT_MAP) {
   const radius = Math.sqrt(mass) * CONFIG.rules.radiusScale;
   const candidates = [];
   for (let i = 0; i < 48; i++) candidates.push({ x: random(), y: random() });
@@ -82,8 +83,11 @@ export function findRespawnPosition(bounds, mass, cells, random) {
       x: radius + point.x * (bounds.width - radius * 2),
       y: radius + point.y * (bounds.height - radius * 2),
     };
+    const clearance = mapIsClear(candidate, map, radius + 20);
     const gap = cells.reduce((nearest, cell) => !cell.alive ? nearest :
-      Math.min(nearest, Math.hypot(candidate.x - cell.x, candidate.y - cell.y) - cell.radius - radius), Infinity);
+      Math.min(nearest, Math.hypot(candidate.x - cell.x, candidate.y - cell.y) - cell.radius - radius),
+    clearance ? Infinity : -Infinity);
+    if (!clearance) continue;
     if (best === null || gap > bestGap) { best = candidate; bestGap = gap; }
     if (gap > 400) return candidate;
   }

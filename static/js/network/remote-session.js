@@ -196,13 +196,15 @@ export class RemoteSession {
     this.onChange();
   }
 
-  async enter(type, name, code, rules) {
+  async enter(type, name, code, rules, map = null) {
     try {
       this.manualClose = false;
       this.cancelReconnect();
       await this.connect();
       this.error = "";
-      this.send({ type, name: name.trim(), code: code?.trim(), ...(type === "create" && rules ? { rules } : {}) });
+      this.send({ type, name: name.trim(), code: code?.trim(),
+        ...(type === "create" && rules ? { rules } : {}),
+        ...(type === "create" && map ? { map } : {}) });
     } catch (error) { this.error = error.message; }
     this.onChange();
   }
@@ -350,6 +352,7 @@ export class RemoteSession {
   start() { this.send({ type: "start" }); }
   rematch() { this.send({ type: "rematch" }); }
   configure(rules) { this.send({ type: "configure", rules }); }
+  configureMap(map) { return this.send({ type: "configure_map", map }); }
   chooseTeam(team) { this.send({ type: 'choose_team', team }); }
   ping(kind, point) {
     if (this.connection !== 'connected' || this.state !== 'playing') return false;
@@ -446,7 +449,8 @@ export class RemoteSession {
       predictionActive: this.prediction.enabled, predictionMs: Math.round(this.prediction.seconds * 1000),
       jitter: Math.round(this.positionBuffer.jitter), interpolationDelay: Math.round(this.positionBuffer.delay * 1000),
       quality: this.connection === "reconnecting" ? "reconnecting" : this.connection !== "connected" ? "offline" : this.state === "playing" && age !== null && age > .5 ? "poor" : this.rtt === null ? "unknown" : this.rtt <= 80 && pendingInputs <= 2 ? "good" : this.rtt <= 180 && pendingInputs <= 6 ? "fair" : "poor" };
-    if (!this.raw) return { ...this.placeholder, state: "ready", network };
+    if (!this.raw) return { ...this.placeholder, state: "ready", map: this.room?.map || this.placeholder.map,
+      obstacles: this.room?.map?.obstacles || this.placeholder.obstacles || [], network };
     const raw = this.raw;
     const owner = raw.players.find(owner => owner.ownerId === this.playerId);
     const teamMode = raw.rules?.mode === "teams";
@@ -471,7 +475,8 @@ export class RemoteSession {
       team: teamMode ? { ...myTeam, standings: teamStandings } : null,
       teamBots: teamMode ? raw.players.filter(p => p.team === owner.team && p.isBot && standings.some(s => s.ownerId === p.ownerId && s.lives > 0))
         .map(p => ({ name: p.name, action: p.teamAction ?? '' })) : [],
-      bounds: raw.bounds, player, playerCells, bots: opponents, foods: this.foods, spores: raw.spores || [], spikes: raw.spikes || [],
+      bounds: raw.bounds, map: raw.map || this.room?.map || null, obstacles: raw.obstacles || [],
+      player, playerCells, bots: opponents, foods: this.foods, spores: raw.spores || [], spikes: raw.spikes || [],
       score: owner.score, elapsed: raw.elapsed, eatenBalls: owner.eatenBalls, killer: owner.killer,
       protectionRemaining: raw.protectionByOwner[this.playerId] ?? 0,
       stats: owner.stats ?? null, practice: null, regrouping: Boolean(owner.regrouping && !this.inactive),

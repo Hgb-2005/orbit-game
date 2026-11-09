@@ -40,6 +40,24 @@ def avoid_spikes(cell, direction, spikes):
     return unit(dx * .25 - ny * side + nx * .5, dy * .25 + nx * side + ny * .5)
 
 
+def avoid_obstacles(cell, direction, obstacles):
+    """把障碍视作不可穿越圆：预测前方就侧向绕行，贴边则先向外退出。"""
+    dx, dy = direction
+    end = {"x": cell["x"] + dx * 190, "y": cell["y"] + dy * 190}
+    danger = min((item for item in obstacles
+                  if segment_distance(item, cell, end) < cell["radius"] + item["radius"] + 24),
+                 key=lambda item: math.hypot(item["x"] - cell["x"], item["y"] - cell["y"]),
+                 default=None)
+    if not danger:
+        return direction
+    ax, ay = cell["x"] - danger["x"], cell["y"] - danger["y"]
+    if math.hypot(ax, ay) < cell["radius"] + danger["radius"] + 20:
+        return unit(ax or 1, ay)
+    nx, ny = unit(ax, ay)
+    side = 1 if dx * -ny + dy * nx >= 0 else -1
+    return unit(dx * .35 - ny * side + nx * .65, dy * .35 + nx * side + ny * .65)
+
+
 def decide(owner, cells, world):
     profile = PROFILES[world.rules.botDifficulty]
     bot = max(cells, key=lambda cell: cell["mass"])
@@ -141,6 +159,7 @@ def decide(owner, cells, world):
         dx += .9 if bot["x"] < edge else -.9 if bot["x"] > world.bounds_width - edge else 0
         dy += .9 if bot["y"] < edge else -.9 if bot["y"] > world.bounds_height - edge else 0
         direction = unit(dx, dy)
+        direction = avoid_obstacles(bot, direction, getattr(world, "obstacles", []))
     return {"x": direction[0], "y": direction[1], "target": None, "regroup": bool(regroup), "split": bool(split)}
 
 

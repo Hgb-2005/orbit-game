@@ -15,6 +15,9 @@ import { HistoryService } from './services/history.js';
 import { HistoryUI } from './presentation/history-ui.js';
 import { VisualAudioAnalyser } from "./visual/audio-visualizer.js";
 import { VisualSettingsUI } from "./visual/visual-settings-ui.js";
+import { MapStore } from "./maps/map-store.js";
+import { MapsUI } from "./maps/maps-ui.js";
+import { mapFromLocation } from "./maps/map-schema.js";
 
 const canvas = document.getElementById("game-canvas");
 const visualCanvas = document.getElementById("game-visual");
@@ -30,7 +33,65 @@ const music = new BackgroundMusic(state => ui.renderMusic(state));
 const effects = new SoundEffects(() => music.context, state => ui.renderEffects(state), { supported: music.supported });
 const visualAudio = new VisualAudioAnalyser();
 const feedback = new VisualFeedback();
-const lobby = new LobbyUI(() => remoteSession);
+const mapStore = new MapStore();
+const sharedMap = mapFromLocation();
+if (sharedMap) {
+  mapStore.save(sharedMap);
+  mapStore.setActive(sharedMap);
+}
+const maps = new MapsUI(mapStore, {
+  onOpen: () => {
+    input.reset();
+    if (session instanceof RemoteSession) session.stop();
+    else if (session.state === "playing") togglePause();
+  },
+  onClose: () => {
+    input.reset();
+    remoteSession?.resumeInput();
+    canvas.focus({ preventScroll: true });
+  },
+  onPlay: map => {
+    if (session instanceof RemoteSession) {
+      remoteSession.close();
+      remoteSession = null;
+      session = localSession;
+      ui.mode = "classic";
+      document.getElementById("game-mode").value = "classic";
+    }
+    mapStore.setActive(map);
+    start(true);
+    ui.toast(`已进入「${map.name}」`);
+  },
+  getRules: () => ({
+    mode: ui.mode,
+    duration: Number(document.getElementById("new-room-duration")?.value || 300),
+    botCount: Number(document.getElementById("new-room-bot-count")?.value || -1),
+    botDifficulty: document.getElementById("new-room-bot-difficulty")?.value || "standard",
+    foodDensity: document.getElementById("new-room-food-density")?.value || "normal",
+    initialMass: Number(document.getElementById("new-room-initial-mass")?.value || 36),
+    itemMode: document.getElementById("new-room-item-mode")?.value || "standard",
+  }),
+  applyRules: rules => {
+    const values = {
+      mode: rules.mode,
+      "new-room-duration": rules.duration,
+      "new-room-bot-count": rules.botCount,
+      "new-room-bot-difficulty": rules.botDifficulty,
+      "new-room-food-density": rules.foodDensity,
+      "new-room-initial-mass": rules.initialMass,
+      "new-room-item-mode": rules.itemMode,
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const element = document.getElementById(id);
+      if (element && value !== undefined && value !== null) element.value = String(value);
+    }
+    if (["classic", "survival", "practice"].includes(rules.mode)) {
+      ui.mode = rules.mode;
+      ui.onModeChange?.(rules.mode);
+    }
+  },
+});
+const lobby = new LobbyUI(() => remoteSession, mapStore);
 const tactics = new TacticsUI({ getSession: () => session, canvas, camera, renderer, toast: message => ui.toast(message) });
 const history = new HistoryService(() => historyUI.render());
 const historyUI = new HistoryUI(history, {
@@ -115,7 +176,9 @@ function start(forceNewGame = false) {
     recordAtStart = scores.highScore;
     ui.focusOnStart();
     renderer.resize();
-    session.start({ width: renderer.width, height: renderer.height }, ui.mode, ui.practiceDrill);
+    session.start({ width: renderer.width, height: renderer.height }, ui.mode, ui.practiceDrill, {
+      map: mapStore.active(),
+    });
     renderer.resetEffects();
     feedback.reset();
     ui.resetRound();

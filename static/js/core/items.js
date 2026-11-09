@@ -1,5 +1,6 @@
 import { CONFIG } from "../config.js";
 import { distanceSquared } from "./entities.js";
+import { DEFAULT_MAP, mapIsClear } from "../maps/map-schema.js";
 
 const TYPES = Object.keys(CONFIG.items.types);
 
@@ -8,12 +9,14 @@ const TYPES = Object.keys(CONFIG.items.types);
  * World 只调用 update/pickup 等入口，后续联机可复用相同的快照结构。
  */
 export class ItemSystem {
-  constructor(random = Math.random) {
+  constructor(random = Math.random, world = null) {
     this.random = random;
-    this.reset("standard");
+    this.world = world;
+    this.reset("standard", world);
   }
 
-  reset(mode = "standard") {
+  reset(mode = "standard", world = this.world) {
+    this.world = world;
     this.mode = Object.hasOwn(CONFIG.items.modes, mode) ? mode : "standard";
     this.items = [];
     this.effects = new Map();
@@ -23,16 +26,37 @@ export class ItemSystem {
     this.nextId = 0;
     this.elapsed = 0;
     const target = CONFIG.items.modes[this.mode].maxCount;
-    while (this.items.length < target) this.items.push(this.createItem());
+    while (this.items.length < target) this.items.push(this.createItem(world));
   }
 
-  createItem() {
+  createItem(world = this.world) {
     const type = TYPES[Math.floor(this.random() * TYPES.length)];
+    const bounds = world?.bounds ?? CONFIG.world;
+    const gameMap = world?.map ?? DEFAULT_MAP;
+    let position = null;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const candidate = {
+        x: 24 + this.random() * (bounds.width - 48),
+        y: 24 + this.random() * (bounds.height - 48),
+      };
+      if (mapIsClear(candidate, gameMap, 18)) {
+        position = candidate;
+        break;
+      }
+    }
+    // 随机源退化时沿中心线寻找空位；地图最多 48 个障碍，因此扫描很快。
+    for (let index = 0; !position && index < 64; index++) {
+      const candidate = {
+        x: 24 + ((index * 37) % 97) / 97 * (bounds.width - 48),
+        y: 24 + ((index * 61) % 97) / 97 * (bounds.height - 48),
+      };
+      if (mapIsClear(candidate, gameMap, 18)) position = candidate;
+    }
+    position ??= { x: bounds.width / 2, y: bounds.height / 2 };
     return {
       id: `item-${this.nextId++}`,
       type,
-      x: 24 + this.random() * (CONFIG.world.width - 48),
-      y: 24 + this.random() * (CONFIG.world.height - 48),
+      ...position,
       radius: 12,
       color: CONFIG.items.types[type].color,
       symbol: CONFIG.items.types[type].symbol,
@@ -135,7 +159,7 @@ export class ItemSystem {
       this.refillTimer += dt;
       while (this.refillTimer >= interval && this.items.length < target) {
         this.refillTimer -= interval;
-        this.items.push(this.createItem());
+        this.items.push(this.createItem(world));
         events.push({ type: "item-spawn" });
       }
     } else {
@@ -174,10 +198,20 @@ export class ItemSystem {
         const distance = Math.hypot(dx, dy);
         if (distance < .001) continue;
         const step = Math.min(distance, CONFIG.items.magnetSpeed * dt);
-        food.x = Math.max(food.radius, Math.min(CONFIG.world.width - food.radius,
+        food.x = Math.max(food.radius, Math.min(world.bounds.width - food.radius,
           food.x + dx / distance * step));
-        food.y = Math.max(food.radius, Math.min(CONFIG.world.height - food.radius,
+        food.y = Math.max(food.radius, Math.min(world.bounds.height - food.radius,
           food.y + dy / distance * step));
+        const before = { x: food.x, y: food.y };
+        const blocked = world.obstacles?.some(obstacle =>
+          Math.hypot(food.x - obstacle.x, food.y - obstacle.y) < food.radius + obstacle.radius);
+        if (blocked) {
+          food.x -= dx / distance * step;
+          food.y -= dy / distance * step;
+          food.x = Math.max(food.radius, Math.min(world.bounds.width - food.radius, food.x));
+          food.y = Math.max(food.radius, Math.min(world.bounds.height - food.radius, food.y));
+          if (before.x === food.x && before.y === food.y) continue;
+        }
       }
     }
   }

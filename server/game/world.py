@@ -5,6 +5,8 @@ import random
 import time
 
 from .entities import BOUNDS, INITIAL_MASS, MAX_CELLS, ball, clamp, grow, keep_inside, merge, move, split
+from .maps import normalize_map
+from .obstacles import map_is_clear, resolve_obstacles
 from .spatial import SpatialGrid
 from .rules import EAT_RADIUS_RATIO, RoomRules, TEAMS
 from .spikes import feed_spikes, update_spikes
@@ -42,13 +44,17 @@ class MultiplayerWorld:
     food_count = 560
     bounds_width, bounds_height = BOUNDS["width"], BOUNDS["height"]
 
-    def __init__(self, members, rng=None, rules=None):
+    def __init__(self, members, rng=None, rules=None, game_map=None):
         self.rules = rules or RoomRules()
+        self.map = normalize_map(game_map, strict=False)
+        self.bounds = {"width": self.map["width"], "height": self.map["height"]}
+        self.bounds_width, self.bounds_height = self.bounds["width"], self.bounds["height"]
+        self.obstacles = [dict(item) for item in self.map["obstacles"]]
         self.duration = self.rules.duration
         self.food_count = {"sparse": 360, "normal": 560, "rich": 800}[self.rules.foodDensity]
         self.rng = rng or random.Random()
         self.elapsed = 0
-        self.safe_zone = SafeZone(BOUNDS, self.duration) if self.rules.mode == 'shrink' else None
+        self.safe_zone = SafeZone(self.bounds, self.duration) if self.rules.mode == 'shrink' else None
         self.zone_notice = None
         self.signals = TeamSignals()
         self.tick = 0
@@ -65,8 +71,8 @@ class MultiplayerWorld:
         self.food_version = 0
         self.hotspots = {"zones": [], "remaining": 45, "duration": 45, "cycle": 0}
         self.rotate_hotspots()
-        # 固定的四个对称出生点，避免房主因更早连接而提前吃食物。
-        starts = [(800, 550), (2400, 1650), (2400, 550), (800, 1650)]
+        # 地图至少提供一个出生点；人数更多时使用确定性偏移，房主不会提前吃食物。
+        starts = [(item["x"], item["y"]) for item in self.map["spawnPoints"]]
         self.spores = []
         self.ball_grid = SpatialGrid()
         self.food_grid = SpatialGrid()
@@ -74,7 +80,8 @@ class MultiplayerWorld:
         self.spike_grid = SpatialGrid()
         self.last_collision_ms = 0.0
         self.last_simulation_ms = 0.0
-        self.spikes = self.create_spikes(starts)
+        self.spikes = ([{**item, "charge": 0} for item in self.map["spikes"]]
+                       if self.map["spikes"] or self.map["id"] != "default" else self.create_spikes(starts))
         team_slots = [0, 0]
         for index, member in enumerate(members):
             owner_id = member["id"]
@@ -105,7 +112,10 @@ class MultiplayerWorld:
                     raise ValueError("每队最多两个参赛者。")
                 spawn = team + team_slots[team] * 2
                 team_slots[team] += 1
-            x, y = starts[spawn]
+            base_x, base_y = starts[spawn % len(starts)]
+            ring = spawn // len(starts)
+            x = clamp(base_x + ring * 90, 80, self.bounds_width - 80)
+            y = clamp(base_y + ring * 90, 80, self.bounds_height - 80)
             self.cells[owner_id] = [ball(self.new_id("cell"), owner, {"x": x, "y": y})]
             grow(self.cells[owner_id][0], self.rules.initialMass - INITIAL_MASS)
             owner["peakMass"] = self.rules.initialMass
@@ -150,7 +160,7 @@ class MultiplayerWorld:
         length = max(1, math.hypot(x, y))
         target = message.get("target")
         if isinstance(target, dict) and finite(target.get("x")) and finite(target.get("y")):
-            target = {"x": clamp(target["x"], 0, BOUNDS["width"]), "y": clamp(target["y"], 0, BOUNDS["height"])}
+            target = {"x": clamp(target["x"], 0, self.bounds_width), "y": clamp(target["y"], 0, self.bounds_height)}
         else:
             target = None
         # 冲刺已取消：即使旧客户端或手工请求携带 sprint，也不能触发服务端加速。
@@ -204,8 +214,12 @@ class MultiplayerWorld:
             decay = math.exp(-SPORE_DECAY * dt)
             spore["vx"] *= decay
             spore["vy"] *= decay
-            if spore["life"] <= 0 or spore["x"] < -spore["radius"] or spore["y"] < -spore["radius"] or spore["x"] > BOUNDS["width"] + spore["radius"] or spore["y"] > BOUNDS["height"] + spore["radius"]:
+            if (spore["life"] <= 0 or spore["x"] < -spore["radius"] or spore["y"] < -spore["radius"]
+                    or spore["x"] > self.bounds_width + spore["radius"] or spore["y"] > self.bounds_height + spore["radius"]):
                 spore["alive"] = False
+            elif self.obstacles:
+                # 孢子撞上实心障碍时反弹，之后仍可被刺球推动或被球吃掉。
+                resolve_obstacles(spore, self.obstacles, self.bounds)
         self.spores = [spore for spore in self.spores if spore["alive"]]
         for owner_id, owner in self.players.items():
             cells = self.cells[owner_id]
@@ -216,8 +230,8 @@ class MultiplayerWorld:
             if self.elapsed - owner["lastInput"] > 1:
                 self.stop_input(owner)
             self.update_controls(owner, cells, dt)
-        self.spikes = update_spikes(self.spikes, dt, BOUNDS)
-        for event in feed_spikes(self.spikes, self.spores, BOUNDS, lambda: self.new_id("launched-spike")):
+        self.spikes = update_spikes(self.spikes, dt, self.bounds)
+        for event in feed_spikes(self.spikes, self.spores, self.bounds, lambda: self.new_id("launched-spike")):
             event_type = event.pop("type")
             self.emit(event_type, **event)
         self.spores = [spore for spore in self.spores if spore["alive"]]
@@ -230,14 +244,15 @@ class MultiplayerWorld:
         self.consume_balls()
         for owner_id, cells in self.cells.items():
             count = len(cells)
-            self.cells[owner_id] = merge(cells, dt)
+            self.cells[owner_id] = merge(cells, dt, self.bounds, self.obstacles)
             if len(self.cells[owner_id]) < count:
                 cell = self.cells[owner_id][0]
                 self.emit("merge", self.players[owner_id], x=cell["x"], y=cell["y"], color=cell["color"])
             owner = self.players[owner_id]
             owner["peakMass"] = max(owner["peakMass"], sum(c["mass"] for c in self.cells[owner_id]))
         for cell in self.all_cells():
-            keep_inside(cell)
+            keep_inside(cell, self.bounds)
+            resolve_obstacles(cell, self.obstacles, self.bounds)
         if self.safe_zone and not self.finished:
             self.safe_zone.apply(self, dt)
         for owner_id, owner in self.players.items():
@@ -304,7 +319,7 @@ class MultiplayerWorld:
         if owner["queuedSplit"] and owner["splitCooldown"] == 0:
             aim = direction if math.hypot(*direction) > .05 else (
                 sum(cell["vx"] * cell["mass"] for cell in cells), sum(cell["vy"] * cell["mass"] for cell in cells))
-            children = split(cells, aim, lambda: self.new_id("cell"))
+            children = split(cells, aim, lambda: self.new_id("cell"), self.bounds, self.obstacles)
             if children:
                 owner["splitCooldown"] = .75
                 for child in children:
@@ -321,8 +336,8 @@ class MultiplayerWorld:
                 dx, dy = aim[0] / length, aim[1] / length
                 grow(source, -SPORE_MASS)
                 spore = {"id": self.new_id("spore"), "ownerId": owner["ownerId"],
-                         "x": clamp(source["x"] + dx * (source["radius"] + math.sqrt(SPORE_MASS) * 2.2 + 12), source["radius"], BOUNDS["width"] - source["radius"]),
-                         "y": clamp(source["y"] + dy * (source["radius"] + math.sqrt(SPORE_MASS) * 2.2 + 12), source["radius"], BOUNDS["height"] - source["radius"]),
+                         "x": clamp(source["x"] + dx * (source["radius"] + math.sqrt(SPORE_MASS) * 2.2 + 12), source["radius"], self.bounds_width - source["radius"]),
+                         "y": clamp(source["y"] + dy * (source["radius"] + math.sqrt(SPORE_MASS) * 2.2 + 12), source["radius"], self.bounds_height - source["radius"]),
                          "mass": SPORE_MASS, "radius": math.sqrt(SPORE_MASS) * 2.2,
                          "vx": dx * SPORE_SPEED, "vy": dy * SPORE_SPEED, "color": owner["color"],
                          "life": SPORE_LIFETIME, "alive": True}
@@ -343,7 +358,8 @@ class MultiplayerWorld:
                 cell_direction = (dx / length * strength, dy / length * strength) if length else (0, 0)
             if owner["isBot"]:
                 cell_direction = avoid_spikes(cell, cell_direction, self.spikes)
-            move(cell, cell_direction, dt, self.item_system.speed_multiplier(owner["ownerId"]))
+            move(cell, cell_direction, dt, self.item_system.speed_multiplier(owner["ownerId"]),
+                 self.bounds, self.obstacles)
         # 收包序号用于去重；只有真正参与物理步的输入才能确认给预测端。
         owner["appliedSeq"] = owner["lastSeq"]
 
@@ -407,7 +423,7 @@ class MultiplayerWorld:
                 direction = (1, 0)
             length = math.hypot(*direction) or 1
             direction = (direction[0] / length, direction[1] / length)
-            children = split(cells, direction, lambda: self.new_id("cell"))
+            children = split(cells, direction, lambda: self.new_id("cell"), self.bounds, self.obstacles)
             for cell in cells:
                 grow(cell, -cell["mass"] * SPIKE_LOSS_RATIO)
                 cell["spikeCooldown"] = SPIKE_COOLDOWN
@@ -508,16 +524,20 @@ class MultiplayerWorld:
             self.finish("last-survivor")
 
     def respawn(self, owner):
-        candidates = [(self.rng.uniform(80, 3120), self.rng.uniform(80, 2120)) for _ in range(48)]
-        candidates.extend((x, y) for y in (100, 1100, 2100) for x in (100, 1600, 3100))
+        candidates = [(self.rng.uniform(80, self.bounds_width - 80), self.rng.uniform(80, self.bounds_height - 80)) for _ in range(48)]
+        candidates.extend((x, y) for y in (100, self.bounds_height / 2, self.bounds_height - 100)
+                          for x in (100, self.bounds_width / 2, self.bounds_width - 100))
         if self.safe_zone:
             state = self.safe_zone.at(self.elapsed)
             radius = max(20, min(state['radius'] - 64, 1000))
             candidates = []
             for _ in range(64):
                 angle, distance = self.rng.random() * math.tau, math.sqrt(self.rng.random()) * radius
-                candidates.append((clamp(state['x'] + math.cos(angle) * distance, 80, 3120),
-                                   clamp(state['y'] + math.sin(angle) * distance, 80, 2120)))
+                candidates.append((clamp(state['x'] + math.cos(angle) * distance, 80, self.bounds_width - 80),
+                                   clamp(state['y'] + math.sin(angle) * distance, 80, self.bounds_height - 80)))
+        candidates = [point for point in candidates if map_is_clear({"x": point[0], "y": point[1]}, self.map, 48)]
+        if not candidates:
+            candidates = [(self.bounds_width / 2, self.bounds_height / 2)]
         cells = self.all_cells()
         def clearance(point):
             return min((math.hypot(point[0] - c["x"], point[1] - c["y"]) - c["radius"] - 18 for c in cells), default=9999)
@@ -554,7 +574,11 @@ class MultiplayerWorld:
         previous = self.hotspots["zones"]
         zones = []
         for index in range(2):
-            candidates = [{"x": self.rng.uniform(250, 2950), "y": self.rng.uniform(250, 1950)} for _ in range(60)]
+            candidates = [{"x": self.rng.uniform(250, self.bounds_width - 250),
+                           "y": self.rng.uniform(250, self.bounds_height - 250)} for _ in range(60)]
+            candidates = [point for point in candidates if map_is_clear(point, self.map, 190)]
+            if not candidates:
+                candidates = [{"x": self.bounds_width / 2, "y": self.bounds_height / 2}]
             neighbors = previous + zones
             def clearance(point):
                 return min((math.hypot(point["x"] - z["x"], point["y"] - z["y"]) for z in neighbors), default=9999)
@@ -569,35 +593,48 @@ class MultiplayerWorld:
             if state['radius'] < 1200:
                 angle = self.rng.random() * math.tau
                 distance = math.sqrt(self.rng.random()) * max(20, state['radius'] - 30)
-                return {"x": clamp(state['x'] + math.cos(angle) * distance, 20, 3180),
-                        "y": clamp(state['y'] + math.sin(angle) * distance, 20, 2180), "hotspotId": None}
+                point = {"x": clamp(state['x'] + math.cos(angle) * distance, 20, self.bounds_width - 20),
+                         "y": clamp(state['y'] + math.sin(angle) * distance, 20, self.bounds_height - 20)}
+                return {**point, "hotspotId": None}
         if rich is None:
             rich = self.rng.random() < .36
         if rich:
             zone = self.rng.choice(self.hotspots["zones"])
             angle, distance = self.rng.random() * math.tau, math.sqrt(self.rng.random()) * 186.7
-            return {"x": zone["x"] + math.cos(angle) * distance, "y": zone["y"] + math.sin(angle) * distance, "hotspotId": zone["id"]}
-        return {"x": self.rng.uniform(20, 3180), "y": self.rng.uniform(20, 2180), "hotspotId": None}
+            point = {"x": zone["x"] + math.cos(angle) * distance, "y": zone["y"] + math.sin(angle) * distance}
+            return {**point, "hotspotId": zone["id"]}
+        for _ in range(40):
+            point = {"x": self.rng.uniform(20, self.bounds_width - 20),
+                     "y": self.rng.uniform(20, self.bounds_height - 20), "hotspotId": None}
+            if map_is_clear(point, self.map, 8):
+                return point
+        return {"x": self.bounds_width / 2, "y": self.bounds_height / 2, "hotspotId": None}
 
     def create_spikes(self, starts):
         spikes = []
         for index in range(SPIKE_COUNT):
             point = None
             for _ in range(100):
-                candidate = {"id": f"spike-{index}", "x": self.rng.uniform(SPIKE_RADIUS, BOUNDS["width"] - SPIKE_RADIUS),
-                             "y": self.rng.uniform(SPIKE_RADIUS, BOUNDS["height"] - SPIKE_RADIUS),
+                candidate = {"id": f"spike-{index}", "x": self.rng.uniform(SPIKE_RADIUS, self.bounds_width - SPIKE_RADIUS),
+                             "y": self.rng.uniform(SPIKE_RADIUS, self.bounds_height - SPIKE_RADIUS),
                              "radius": SPIKE_RADIUS, "color": "#72c98e"}
                 if any((candidate["x"] - x) ** 2 + (candidate["y"] - y) ** 2 < (SPIKE_RADIUS + 220) ** 2 for x, y in starts):
                     continue
-                if (candidate["x"] - BOUNDS["width"] / 2) ** 2 + (candidate["y"] - BOUNDS["height"] / 2) ** 2 < (620 + SPIKE_RADIUS + 220) ** 2:
+                if not map_is_clear(candidate, self.map, SPIKE_RADIUS + 40):
+                    continue
+                if (candidate["x"] - self.bounds_width / 2) ** 2 + (candidate["y"] - self.bounds_height / 2) ** 2 < (620 + SPIKE_RADIUS + 220) ** 2:
                     continue
                 if any((candidate["x"] - other["x"]) ** 2 + (candidate["y"] - other["y"]) ** 2 < (SPIKE_RADIUS * 2 + 180) ** 2 for other in spikes):
                     continue
                 point = candidate
                 break
             if not point:
+                scale_x, scale_y = self.bounds_width / 3200, self.bounds_height / 2200
                 fallback = [(300, 280), (1600, 220), (2900, 280), (260, 1900), (1600, 1980),
                             (2940, 1900), (520, 1100), (2680, 1100), (900, 520), (2300, 1680)][index]
+                fallback = (fallback[0] * scale_x, fallback[1] * scale_y)
+                if not map_is_clear({"x": fallback[0], "y": fallback[1]}, self.map, SPIKE_RADIUS):
+                    continue
                 point = {"id": f"spike-{index}", "x": fallback[0], "y": fallback[1],
                          "radius": SPIKE_RADIUS, "color": "#72c98e"}
             spikes.append({**point, "charge": 0})
@@ -668,7 +705,8 @@ class MultiplayerWorld:
                  | {"vx": round(cell["vx"] + cell["impulseX"], 3), "vy": round(cell["vy"] + cell["impulseY"], 3),
                     "motion": {key: round(cell[key], 3) for key in ("vx", "vy", "impulseX", "impulseY")}}
                  for cell in self.all_cells()]
-        return {"tick": self.tick, "elapsed": self.elapsed, "duration": self.duration, "bounds": BOUNDS,
+        return {"tick": self.tick, "elapsed": self.elapsed, "duration": self.duration, "bounds": self.bounds,
+                "map": self.map, "obstacles": self.obstacles,
                 "rules": self.rules.snapshot(), "teams": self.team_standings(),
                 "safeZone": self.safe_zone.at(self.elapsed) if self.safe_zone else None,
                 "pings": self.signals.snapshot(self.elapsed),

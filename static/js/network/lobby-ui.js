@@ -1,11 +1,13 @@
 const $ = id => document.getElementById(id);
 import { ROOM_DEFAULTS, ROOM_PRESETS, RULE_FIELDS, MODE_NAMES, describeRules, presetName } from "./room-rules.js";
 import { shareRoomInvite } from "./invite-share.js";
+import { MapStore } from "../maps/map-store.js";
 
 /** 房间显示与模拟分开；昵称一律用 textContent，不解释为 HTML。 */
 export class LobbyUI {
-  constructor(getSession) {
+  constructor(getSession, maps = new MapStore()) {
     this.getSession = getSession;
+    this.maps = maps;
     this.signature = "";
     this.inviteOrigin = location.origin;
     void fetch("/api/network-info").then(response => response.json()).then(info => {
@@ -23,7 +25,7 @@ export class LobbyUI {
       if (!name || name.length > 12) { $("network-error").textContent = "请输入 1～12 个字的昵称。"; $("nickname").focus(); return; }
       try { localStorage.setItem("orbit.nickname", name); } catch { /* 无需存储也能联机。 */ }
       void this.getSession()?.enter(type, name, $("room-code-input").value,
-        this.readRules("new-room"));
+        this.readRules("new-room"), this.readMap("new-room-map"));
     };
     $("create-room").addEventListener("click", () => enter("create"));
     $("join-room").addEventListener("click", () => enter("join"));
@@ -59,6 +61,14 @@ export class LobbyUI {
         this.writeRules(prefix, { ...this.readRules(prefix), ...preset }); changed();
       });
     }
+    $("new-room-map").addEventListener("change", () => {
+      const map = this.readMap("new-room-map");
+      $("new-room-note").textContent = `${describeRules(this.readRules("new-room"))} 地图：${map?.name ?? "微光标准场"}。`;
+    });
+    $("room-map").addEventListener("change", () => {
+      const map = this.readMap("room-map");
+      if (map) this.getSession()?.configureMap(map);
+    });
     $("new-room-note").textContent = describeRules(ROOM_DEFAULTS);
     $("copy-room-link").addEventListener("click", async () => {
       const url = new URL(this.inviteOrigin);
@@ -126,6 +136,13 @@ export class LobbyUI {
     this.writeRules("room", room.rules);
     for (const field of [...Object.values(RULE_FIELDS), "preset"]) $(`room-${field}`).disabled = locked;
     $("room-bot-count").disabled ||= room.rules?.mode === "teams";
+    const roomMap = room.map ?? this.maps.active();
+    const mapOption = [...$("room-map").options].find(option => option.value === roomMap.id);
+    if (mapOption) $("room-map").value = roomMap.id;
+    $("room-map").disabled = locked || !mapOption;
+    const roomMapSummary = `${roomMap.name} · ${roomMap.width}×${roomMap.height}` +
+      ` · 刺 ${roomMap.spikes ?? 0} · 障碍 ${roomMap.obstacles ?? 0}`;
+    $("room-map-summary").textContent = host ? roomMapSummary : `${roomMapSummary}（房主设定）`;
     const teamMode = room.rules?.mode === 'teams';
     $('room-teams').hidden = !teamMode || room.state !== 'waiting';
     if (teamMode) {
@@ -170,6 +187,11 @@ export class LobbyUI {
       const value = $(`${prefix}-${field}`).value;
       return [key, ["duration", "botCount", "initialMass"].includes(key) ? Number(value) : value];
     }));
+  }
+
+  readMap(id) {
+    const selected = document.getElementById(id)?.value;
+    return this.maps.list().find(map => map.id === selected) ?? this.maps.active();
   }
 
   writeRules(prefix, rules) {

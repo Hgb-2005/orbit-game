@@ -1,8 +1,9 @@
 import { CONFIG } from "../config.js";
 import { clamp, distanceSquared } from "./entities.js";
+import { DEFAULT_MAP, mapIsClear } from "../maps/map-schema.js";
 
 /** 生成固定在地图上的绿色刺球，出生时尽量避开玩家中心和彼此。 */
-export function createSpikes(bounds, random, avoid = []) {
+export function createSpikes(bounds, random, avoid = [], map = DEFAULT_MAP) {
   const spikes = [];
   // 开局中心留出一段安全航道，避免新手刚开始移动就被随机刺球截住。
   const center = { x: bounds.width / 2, y: bounds.height / 2, radius: 620 };
@@ -19,6 +20,7 @@ export function createSpikes(bounds, random, avoid = []) {
       };
       if (protectedEntities.some(entity => distanceSquared(candidate, entity) < (candidate.radius + (entity.radius || 0) + 220) ** 2)) continue;
       if (spikes.some(other => distanceSquared(candidate, other) < (candidate.radius + other.radius + 180) ** 2)) continue;
+      if (!mapIsClear(candidate, map, candidate.radius + 24)) continue;
       point = candidate;
     }
     if (!point) {
@@ -26,9 +28,13 @@ export function createSpikes(bounds, random, avoid = []) {
         [300, 280], [1600, 220], [2900, 280], [260, 1900], [1600, 1980],
         [2940, 1900], [520, 1100], [2680, 1100], [900, 520], [2300, 1680],
       ][index];
-      point = { id: `spike-${index}`, x: fallback[0], y: fallback[1], radius: CONFIG.spikes.radius, color: "#72c98e" };
+      const candidate = { id: `spike-${index}`,
+        x: fallback[0] * bounds.width / 3200,
+        y: fallback[1] * bounds.height / 2200,
+        radius: CONFIG.spikes.radius, color: "#72c98e" };
+      if (mapIsClear(candidate, map, candidate.radius + 24)) point = candidate;
     }
-    spikes.push({ ...point, charge: 0 });
+    if (point) spikes.push({ ...point, charge: 0 });
   }
   return spikes;
 }

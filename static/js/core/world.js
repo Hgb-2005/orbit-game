@@ -12,16 +12,29 @@ import { SpatialGrid } from "./spatial-grid.js";
 import { RoundStats } from "./round-stats.js";
 import { PracticeCourse } from "./practice.js";
 import { ItemSystem } from "./items.js";
+import { DEFAULT_MAP, mapIsClear, normalizeMap } from "../maps/map-schema.js";
+import { resolveObstacleCollisions, resolveSporeObstacleCollisions } from "../maps/obstacles.js";
 
 /** 纯游戏状态与规则，不访问 DOM、Canvas、网络和数据库。 */
 export class World {
-  constructor(random = Math.random) {
+  constructor(random = Math.random, map = DEFAULT_MAP) {
     this.random = random;
-    this.bounds = { ...CONFIG.world };
+    this.map = normalizeMap(map);
+    this.bounds = { width: this.map.width, height: this.map.height };
+    this.obstacles = this.map.obstacles.map(item => ({ ...item }));
     this.reset();
   }
 
+  setMap(map) {
+    this.map = normalizeMap(map);
+    this.bounds = { width: this.map.width, height: this.map.height };
+    this.obstacles = this.map.obstacles.map(item => ({ ...item }));
+  }
+
   reset(viewSize = { width: 900, height: 650 }, mode = "classic", drill = "split", options = {}) {
+    // 单机重开和联机换图都经过同一入口。地图一旦切换，边界、障碍和
+    // 出生点必须整体替换，不能只改尺寸而留下上一张地图的实体。
+    if (options.map) this.setMap(options.map);
     this.mode = ["survival", "practice"].includes(mode) ? mode : "classic";
     this.survival = this.mode === "survival" ? new SurvivalRound() : null;
     this.practice = this.mode === "practice" ? new PracticeCourse(drill) : null;
@@ -51,22 +64,29 @@ export class World {
     this.foodGrid = new SpatialGrid(CONFIG.spatial.cellSize);
     this.sporeGrid = new SpatialGrid(CONFIG.spatial.cellSize);
     this.spikeGrid = new SpatialGrid(CONFIG.spatial.cellSize);
-    this.itemSystem = new ItemSystem(this.random);
-    this.itemSystem.reset(this.itemMode);
+    this.itemSystem = new ItemSystem(this.random, this);
+    this.itemSystem.reset(this.itemMode, this);
     this.botSplitCooldowns = new Map();
     this.stage = getStage(0);
     this.difficulty = getDifficulty(0, this.peakMass, 0);
-    this.view = {
-      left: (this.bounds.width - viewSize.width) / 2, right: (this.bounds.width + viewSize.width) / 2,
-      top: (this.bounds.height - viewSize.height) / 2, bottom: (this.bounds.height + viewSize.height) / 2,
-    };
+    const spawn = this.map.spawnPoints[0];
     this.lastPlayer = createBall({
-      id: "player", x: this.bounds.width / 2, y: this.bounds.height / 2,
+      id: "player", x: spawn.x, y: spawn.y,
       mass: CONFIG.player.initialMass, name: "你", color: "#b4efcc", isPlayer: true,
     });
     this.playerCells = [this.lastPlayer];
+    // 初始镜头必须围绕玩家出生点，而不是默认地图中心。自定义地图的出生点
+    // 可能位于地图边缘；在首帧 Session 回传视窗前，AI 生成也必须使用同一视野。
+    const halfViewWidth = Math.min(viewSize.width, this.bounds.width) / 2;
+    const halfViewHeight = Math.min(viewSize.height, this.bounds.height) / 2;
+    const left = Math.max(0, Math.min(this.bounds.width - halfViewWidth * 2, spawn.x - halfViewWidth));
+    const top = Math.max(0, Math.min(this.bounds.height - halfViewHeight * 2, spawn.y - halfViewHeight));
+    this.view = {
+      left, right: left + halfViewWidth * 2,
+      top, bottom: top + halfViewHeight * 2,
+    };
     this.survival?.register(this.lastPlayer);
-    this.hotspots = new FoodHotspots(this.bounds, this.random);
+    this.hotspots = new FoodHotspots(this.bounds, this.random, this.map);
     this.foods = Array.from({ length: CONFIG.food.count }, () => this.createFood());
     this.bots = [];
     for (let i = 0; i < CONFIG.bots.count; i++) {
@@ -76,7 +96,9 @@ export class World {
         this.survival?.register(bot);
       }
     }
-    this.spikes = createSpikes(this.bounds, this.random, [this.lastPlayer, ...this.bots]);
+    this.spikes = this.map.id === "default" && !this.map.spikes.length
+      ? createSpikes(this.bounds, this.random, [this.lastPlayer, ...this.bots], this.map)
+      : this.map.spikes.map(item => ({ ...item, charge: 0 }));
     this.spikeGrid.build(this.spikes);
     if (this.practice) this.practice.setup(this);
     this.stats.observe(this.playerCells);
@@ -122,9 +144,13 @@ export class World {
   }
 
   createFood() {
+    let position = this.hotspots.sampleFoodPosition();
+    for (let attempt = 0; attempt < 30 && !mapIsClear(position, this.map, CONFIG.food.radius); attempt++) {
+      position = this.hotspots.sampleFoodPosition();
+    }
     return {
       id: `food-${this.nextId++}`,
-      ...this.hotspots.sampleFoodPosition(),
+      ...position,
       radius: CONFIG.food.radius,
       color: FOOD_COLORS[Math.floor(this.random() * FOOD_COLORS.length)],
     };
@@ -139,7 +165,8 @@ export class World {
     const radius = Math.sqrt(mass) * CONFIG.rules.radiusScale;
     // 出生点远离玩家，重生时也不允许直接出现在玩家身上。
     let position = null;
-    if (this.survival) position = findRespawnPosition(this.bounds, mass, [...this.playerCells, ...this.bots], this.random);
+    if (this.survival) position = findRespawnPosition(this.bounds, mass, [...this.playerCells, ...this.bots],
+      this.random, this.map);
     for (let attempt = 0; !position && attempt < 120; attempt++) {
       const candidate = {
         x: radius + this.random() * (this.bounds.width - radius * 2),
@@ -148,6 +175,7 @@ export class World {
       if (!outsideView(candidate, this.view)) continue;
       if (this.playerCells.some(cell => distanceSquared(candidate, cell) <= (cell.radius + radius + 330) ** 2)) continue;
       if (this.bots.some(other => distanceSquared(candidate, other) < (radius + other.radius + 30) ** 2)) continue;
+      if (!mapIsClear(candidate, this.map, radius + 16)) continue;
       position = candidate;
       break;
     }
@@ -201,6 +229,7 @@ export class World {
       }
       moveBall(cell, cellDirection, dt, this.bounds,
         (this.sprint.remaining > 0 ? CONFIG.sprint.multiplier : 1) * this.itemSystem.speedMultiplier("player"));
+      resolveObstacleCollisions(cell, this.obstacles, this.bounds);
     }
 
     if (!this.practice) this.updateBotSplits(dt);
@@ -211,16 +240,22 @@ export class World {
         bot.thinkTimer = BOT_SKILLS[this.botDifficulty].reaction + this.random() * 0.1;
       }
       moveBall(bot, bot.direction, dt, this.bounds, this.itemSystem.speedMultiplier(bot.ownerId));
+      resolveObstacleCollisions(bot, this.obstacles, this.bounds);
     }
 
     const sporePressed = Boolean(input.spore);
     if (((sporePressed && !this.sporeWasPressed) || input.sporeHeld) && this.sporeCooldown === 0) this.emitSpore(input);
     this.sporeWasPressed = sporePressed;
     this.spores = updateSpores(this.spores, dt, this.bounds);
+    for (const spore of this.spores) resolveSporeObstacleCollisions(spore, this.obstacles, this.bounds);
     this.spikes = updateSpikes(this.spikes, dt, this.bounds);
+    for (const spike of this.spikes) {
+      if (spike.projectile) resolveObstacleCollisions(spike, this.obstacles, this.bounds);
+    }
     this.events.push(...feedSpikes(this.spikes, this.spores, this.bounds, () => `launched-spike-${this.nextId++}`));
     this.spores = this.spores.filter(spore => spore.alive);
     this.handleSpikes(input);
+    for (const cell of [...this.playerCells, ...this.bots]) resolveObstacleCollisions(cell, this.obstacles, this.bounds);
 
     const sporeBalls = [...this.playerCells, ...this.bots];
     this.ballGrid.build(sporeBalls);
@@ -240,9 +275,10 @@ export class World {
       this.events.push({ type: "merge", x: this.player.x, y: this.player.y, color: this.player.color });
     }
     this.bots = [...this.botGroups.values()].flatMap(cells => updateCellGroup(cells, dt, this.bounds));
+    for (const ball of [...this.playerCells, ...this.bots]) resolveObstacleCollisions(ball, this.obstacles, this.bounds);
     this.updateProgression();
     // 吞噬后半径会增大，需要再次收紧位置，避免小球长到地图边界之外。
-    for (const ball of [...this.playerCells, ...this.bots]) clampCell(ball, this.bounds);
+    for (const ball of [...this.playerCells, ...this.bots]) resolveObstacleCollisions(ball, this.obstacles, this.bounds);
     this.stats.record(this.events);
     this.stats.observe(this.playerCells);
     this.stats.sample(this.elapsed, this.playerCells, this.gameOver);
@@ -290,6 +326,7 @@ export class World {
       x: Math.max(source.radius, Math.min(this.bounds.width - source.radius, source.x + dx * (source.radius + Math.sqrt(CONFIG.spore.mass) * 2.2 + 12))),
       y: Math.max(source.radius, Math.min(this.bounds.height - source.radius, source.y + dy * (source.radius + Math.sqrt(CONFIG.spore.mass) * 2.2 + 12))),
       direction, color: source.color });
+    resolveSporeObstacleCollisions(spore, this.obstacles, this.bounds);
     this.spores.push(spore);
     this.sporeCooldown = CONFIG.spore.cooldown;
     this.events.push({ type: "spore", x: spore.x, y: spore.y, color: source.color });
@@ -501,7 +538,8 @@ export class World {
   }
 
   respawnOwner(owner) {
-    const position = findRespawnPosition(this.bounds, owner.initialMass, [...this.playerCells, ...this.bots], this.random);
+    const position = findRespawnPosition(this.bounds, owner.initialMass, [...this.playerCells, ...this.bots],
+      this.random, this.map);
     const ball = createBall({ ...position, id: `respawn-${this.nextId++}`, ownerId: owner.ownerId,
       mass: owner.initialMass, name: owner.name, color: owner.color, isPlayer: owner.isPlayer });
     ball.role = owner.role;

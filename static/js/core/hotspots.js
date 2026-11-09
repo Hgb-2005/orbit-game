@@ -1,11 +1,13 @@
 import { CONFIG } from "../config.js";
 import { distanceSquared } from "./entities.js";
+import { DEFAULT_MAP, mapIsClear } from "../maps/map-schema.js";
 
 /** 富集区只改变食物的空间分布；计时随模拟推进，暂停时不会换位。 */
 export class FoodHotspots {
-  constructor(bounds, random = Math.random) {
+  constructor(bounds, random = Math.random, map = DEFAULT_MAP) {
     this.bounds = bounds;
     this.random = random;
+    this.map = map;
     this.cycle = 0;
     this.remaining = CONFIG.hotspots.duration;
     this.zones = this.createZones([]);
@@ -27,7 +29,7 @@ export class FoodHotspots {
         const neighbors = [...zones, ...previous];
         const clearance = neighbors.length ? Math.min(...neighbors.map(zone => Math.sqrt(distanceSquared(candidate, zone)))) : Infinity;
         if (clearance > bestClearance) { best = candidate; bestClearance = clearance; }
-        if (clearance >= CONFIG.hotspots.separation) break;
+        if (clearance >= CONFIG.hotspots.separation && mapIsClear(candidate, this.map, radius + 20)) break;
       }
       // 随机源退化时使用分散的备用点，避免区域叠在一起或原地换位。
       if (bestClearance < radius * 2.2) {
@@ -37,9 +39,11 @@ export class FoodHotspots {
           { x: this.bounds.width / 2, y: this.bounds.height / 2 },
         ];
         const neighbors = [...zones, ...previous];
+        const clearChoices = choices.filter(point => mapIsClear(point, this.map, radius + 20));
+        const candidates = clearChoices.length ? clearChoices : choices;
         const clearance = point => Math.min(...neighbors.map(zone => distanceSquared(point, zone)));
-        choices.sort((a, b) => clearance(b) - clearance(a));
-        best = { ...best, ...choices[0] };
+        candidates.sort((a, b) => clearance(b) - clearance(a));
+        best = { ...best, ...candidates[0] };
       }
       zones.push(best);
     }
@@ -63,12 +67,23 @@ export class FoodHotspots {
       const angle = this.random() * Math.PI * 2;
       // sqrt 保证在圆形面积内均匀采样，而不是全部挤到中心。
       const distance = Math.sqrt(this.random()) * (zone.radius - CONFIG.food.radius);
-      return { x: zone.x + Math.cos(angle) * distance, y: zone.y + Math.sin(angle) * distance, hotspotId: zone.id };
+      const candidate = { x: zone.x + Math.cos(angle) * distance, y: zone.y + Math.sin(angle) * distance, hotspotId: zone.id };
+      if (mapIsClear(candidate, this.map, CONFIG.food.radius)) return candidate;
     }
-    return {
-      x: 20 + this.random() * (this.bounds.width - 40),
-      y: 20 + this.random() * (this.bounds.height - 40), hotspotId: null,
-    };
+    // 富集区被障碍切开或随机源退化时，最多尝试 40 次寻找普通空位。
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const candidate = {
+        x: 20 + this.random() * (this.bounds.width - 40),
+        y: 20 + this.random() * (this.bounds.height - 40), hotspotId: null,
+      };
+      if (mapIsClear(candidate, this.map, CONFIG.food.radius)) return candidate;
+    }
+    for (let index = 0; index < 80; index++) {
+      const candidate = { x: 20 + (index * 53 % 97) / 97 * (this.bounds.width - 40),
+        y: 20 + (index * 71 % 97) / 97 * (this.bounds.height - 40), hotspotId: null };
+      if (mapIsClear(candidate, this.map, CONFIG.food.radius)) return candidate;
+    }
+    return { x: this.bounds.width / 2, y: this.bounds.height / 2, hotspotId: null };
   }
 
   getSnapshot() {

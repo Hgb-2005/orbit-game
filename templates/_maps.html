@@ -1,0 +1,89 @@
+{# 地图工坊只编辑本地 JSON；服务端会在创建房间和开局时再次严格校验。 #}
+<dialog id="maps-dialog" class="maps-dialog" aria-labelledby="maps-title">
+  <div class="maps-shell">
+    <header class="maps-header">
+      <div>
+        <p class="eyebrow">MAP FORGE · LOCAL JSON</p>
+        <h2 id="maps-title">地图工坊</h2>
+        <p>放置障碍、刺球并调整出生点。保存后可单机游玩或带到联机房间。</p>
+      </div>
+      <button id="maps-close" class="icon-button" type="button" aria-label="关闭地图工坊">×</button>
+    </header>
+
+    <div class="maps-layout">
+      <section class="maps-canvas-panel" aria-label="地图画布">
+        <div class="map-editor-toolbar">
+          <label>工具
+            <select id="map-tool">
+              <option value="obstacle">圆形障碍</option>
+              <option value="spike">刺球</option>
+              <option value="spawn">移动出生点</option>
+              <option value="delete">删除物件</option>
+            </select>
+          </label>
+          <label class="map-radius-control">半径
+            <input id="map-radius" type="range" min="30" max="360" step="1" value="90">
+            <output id="map-radius-value" for="map-radius">90</output>
+          </label>
+          <button id="map-undo" class="text-button" type="button">撤销</button>
+          <button id="map-selected-delete" class="text-button" type="button" disabled>删除选中</button>
+        </div>
+        <div class="map-editor-stage">
+          <canvas id="map-editor-canvas" aria-label="地图编辑画布。点击或拖动放置物件；选中物件后可拖动位置。"></canvas>
+        </div>
+        <p id="map-status" class="map-status" role="status">地图数据只保存在当前浏览器；可导出 JSON 分享。</p>
+      </section>
+
+      <aside class="maps-controls" aria-label="地图设置">
+        <section>
+          <label>已有地图
+            <select id="map-list"></select>
+          </label>
+          <div class="map-button-row">
+            <button id="map-new" class="room-button" type="button">新建</button>
+            <button id="map-save" class="room-button room-primary" type="button">保存并设为当前</button>
+            <button id="map-delete" class="room-button" type="button">删除</button>
+          </div>
+        </section>
+
+        <section>
+          <h3>地图信息</h3>
+          <label>名称<input id="map-name" maxlength="28" autocomplete="off"></label>
+          <label>地图 ID<input id="map-id" maxlength="48" autocomplete="off" pattern="[a-z0-9_-]{1,48}"></label>
+          <div class="map-size-fields">
+            <label>宽<input id="map-width" type="number" min="1600" max="4800" step="1"></label>
+            <label>高<input id="map-height" type="number" min="1200" max="3600" step="1"></label>
+          </div>
+          <button id="map-apply-metadata" class="text-button" type="button">应用名称与尺寸</button>
+        </section>
+
+        <section>
+          <h3>分享与导入</h3>
+          <div class="map-button-row">
+            <button id="map-download" class="room-button" type="button">下载 JSON</button>
+            <button id="map-import" class="room-button" type="button">导入文本框</button>
+            <label class="map-file-button">选择文件<input id="map-file" type="file" accept=".json,application/json" hidden></label>
+          </div>
+          <textarea id="map-json" rows="7" spellcheck="false" aria-label="地图 JSON"></textarea>
+          <div class="map-button-row">
+            <button id="map-copy-link" class="room-button" type="button">复制地图链接</button>
+            <button id="map-play" class="room-button room-primary" type="button">用此地图开始</button>
+          </div>
+        </section>
+
+        <section>
+          <h3>对局预设</h3>
+          <label>预设名称<input id="map-preset-name" maxlength="28" placeholder="例如：团队回廊"></label>
+          <select id="map-preset-list" aria-label="已保存对局预设"></select>
+          <div class="map-button-row">
+            <button id="map-preset-save" class="room-button" type="button">保存预设</button>
+            <button id="map-preset-load" class="room-button" type="button">加载</button>
+            <button id="map-preset-delete" class="room-button" type="button">删除</button>
+          </div>
+        </section>
+        {# 地图 JSON 的导出按钮在旧版工具栏使用独立节点，这里保留兼容入口。 #}
+        <button id="map-export" class="screen-reader-only" type="button">生成 JSON</button>
+      </aside>
+    </div>
+  </div>
+</dialog>

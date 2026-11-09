@@ -74,7 +74,7 @@ def keep_inside(cell, bounds=None, policy=None, restitution=None):
     return cell
 
 
-def move(cell, direction, dt, multiplier=1):
+def move(cell, direction, dt, multiplier=1, bounds=None, obstacles=None):
     dx, dy = direction
     length = max(1, math.hypot(dx, dy))
     smoothing = 1 - math.exp(-12 * dt)
@@ -86,10 +86,14 @@ def move(cell, direction, dt, multiplier=1):
     cell["y"] += cell["vy"] * dt + cell["impulseY"] * impulse_time
     cell["impulseX"] *= decay
     cell["impulseY"] *= decay
-    keep_inside(cell)
+    keep_inside(cell, bounds)
+    if obstacles:
+        # 延迟导入避免障碍模块与实体模块形成初始化环。
+        from .obstacles import resolve_obstacles
+        resolve_obstacles(cell, obstacles, bounds or BOUNDS)
 
 
-def split(cells, direction, next_id):
+def split(cells, direction, next_id, bounds=None, obstacles=None):
     length = math.hypot(*direction)
     if length < .05 or len(cells) >= MAX_CELLS:
         return []
@@ -103,13 +107,16 @@ def split(cells, direction, next_id):
                  "x": source["x"] + dx * source["radius"] * .65,
                  "y": source["y"] + dy * source["radius"] * .65}
         source["mergeRemaining"] = child["mergeRemaining"] = 10
-        keep_inside(child)
+        keep_inside(child, bounds)
+        if obstacles:
+            from .obstacles import resolve_obstacles
+            resolve_obstacles(child, obstacles, bounds or BOUNDS)
         children.append(child)
     cells.extend(children)
     return children
 
 
-def merge(cells, dt):
+def merge(cells, dt, bounds=None, obstacles=None):
     for cell in cells:
         cell["mergeRemaining"] = max(0, cell["mergeRemaining"] - dt)
     for index, a in enumerate(cells):
@@ -137,6 +144,10 @@ def merge(cells, dt):
                 a["y"] += ny * shift * mass_b / total
                 b["x"] -= nx * shift * mass_a / total
                 b["y"] -= ny * shift * mass_a / total
-            keep_inside(a)
-            keep_inside(b)
+            keep_inside(a, bounds)
+            keep_inside(b, bounds)
+            if obstacles:
+                from .obstacles import resolve_obstacles
+                resolve_obstacles(a, obstacles, bounds or BOUNDS)
+                resolve_obstacles(b, obstacles, bounds or BOUNDS)
     return [cell for cell in cells if cell["alive"]]

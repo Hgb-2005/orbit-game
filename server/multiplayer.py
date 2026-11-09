@@ -18,6 +18,7 @@ from .database import save_match_history
 from .history import network_history
 from .game.world import MultiplayerWorld
 from .game.rules import RoomRules
+from .game.maps import DEFAULT_MAP, MapValidationError, map_summary, normalize_map
 from .replication import FoodFrame
 from .replication import encode
 
@@ -97,6 +98,7 @@ class Room:
     food_version: int = -1
     food_frame: object = None
     rules: RoomRules = field(default_factory=RoomRules)
+    game_map: object = field(default_factory=lambda: normalize_map(DEFAULT_MAP))
     custom_record: object = None
     history_queued: bool = False
 
@@ -327,6 +329,7 @@ class RoomManager:
         return {"type": "room", "code": room.code, "hostId": room.host, "state": room.state,
                 "roundId": room.round_id, "capacity": ROOM_CAPACITY, "aiCount": ai_count,
                 "participantCount": len(room.members) + ai_count, "rules": room.rules.snapshot(), "ranked": room.rules.ranked,
+                "map": map_summary(room.game_map),
                 "customRecord": room.custom_record,
                 "members": [{"id": peer.id, "name": peer.name, "ready": peer.ready, "connected": peer.connected,
                              "team": room.world.players[pid]["team"] if room.world and pid in room.world.players
@@ -416,7 +419,8 @@ class RoomManager:
                         code = f"{secrets.randbelow(1_000_000):06d}"
                         while code in self.rooms:
                             code = f"{secrets.randbelow(1_000_000):06d}"
-                        room = Room(code, peer.id, rules=RoomRules.parse(message.get("rules")))
+                        room = Room(code, peer.id, rules=RoomRules.parse(message.get("rules")),
+                                    game_map=normalize_map(message.get("map") or DEFAULT_MAP))
                         self.rooms[code] = room
                     else:
                         code = message.get("code")
@@ -477,6 +481,15 @@ class RoomManager:
                         for pid in room.members:
                             self.peers[pid].ready = False
                         self.broadcast_room(room)
+                elif kind == "configure_map":
+                    if room.host != peer.id or room.state != "waiting":
+                        raise ValueError("只有房主可以在准备室更换地图。")
+                    game_map = normalize_map(message.get("map"))
+                    if game_map != room.game_map:
+                        room.game_map = game_map
+                        for pid in room.members:
+                            self.peers[pid].ready = False
+                        self.broadcast_room(room)
                 elif kind == "start":
                     if room.host != peer.id:
                         raise ValueError("只有房主可以开始对局。")
@@ -495,7 +508,9 @@ class RoomManager:
                                              "name": BOT_NAMES[index % len(BOT_NAMES)], "isBot": True,
                                              **({'team': team} if room.rules.mode == 'teams' else {}),
                                              "role": ("forager", "rival", "hunter")[index % 3]})
-                    room.world = MultiplayerWorld(participants, rules=room.rules)
+                    # 开局时再次校验并保存房间地图；断线重连和对局状态始终引用同一份权威数据。
+                    room.game_map = normalize_map(room.game_map)
+                    room.world = MultiplayerWorld(participants, rules=room.rules, game_map=room.game_map)
                     room.round_id, room.state, room.saved = secrets.token_hex(8), "playing", False
                     room.custom_record = None
                     room.history_queued = False
@@ -591,7 +606,8 @@ def init_multiplayer(app):
             return save_match_history(match)
     manager = RoomManager(persist, save_custom_score=persist_custom, save_history=persist_history)
     app.extensions["orbit_rooms"] = manager
-    app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 15, "max_message_size": 4096}
+    # 地图 JSON 最大约 48 个障碍，保留足够余量，同时仍限制恶意超大帧。
+    app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 15, "max_message_size": 65536}
     sock = Sock(app)
 
     @sock.route("/ws/arena")

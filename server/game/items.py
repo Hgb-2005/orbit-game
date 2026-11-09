@@ -3,7 +3,8 @@
 import math
 import random
 
-from .entities import BOUNDS, clamp
+from .entities import clamp
+from .obstacles import map_is_clear
 from .rules import EAT_RADIUS_RATIO
 
 ITEM_TYPES = ("shield", "magnet", "speed", "cloak")
@@ -38,8 +39,14 @@ class ItemSystem:
     def create(self):
         self.next_id += 1
         kind = self.world.rng.choice(ITEM_TYPES)
-        return {"id": f"item-{self.next_id}", "type": kind, "x": self.world.rng.uniform(24, BOUNDS["width"] - 24),
-                "y": self.world.rng.uniform(24, BOUNDS["height"] - 24), "radius": 12,
+        point = {"x": self.world.bounds_width / 2, "y": self.world.bounds_height / 2}
+        for _ in range(30):
+            candidate = {"x": self.world.rng.uniform(24, self.world.bounds_width - 24),
+                         "y": self.world.rng.uniform(24, self.world.bounds_height - 24)}
+            if map_is_clear(candidate, self.world.map, 12):
+                point = candidate
+                break
+        return {"id": f"item-{self.next_id}", "type": kind, **point, "radius": 12,
                 "color": ITEM_COLORS[kind], "symbol": ITEM_LABELS[kind][0]}
 
     def active(self, owner_id, kind):
@@ -138,8 +145,8 @@ class ItemSystem:
                 if distance <= 0.001 or distance > MAGNET_RADIUS:
                     continue
                 step = min(distance, MAGNET_SPEED * dt)
-                next_x = clamp(food["x"] + dx / distance * step, food["radius"], BOUNDS["width"] - food["radius"])
-                next_y = clamp(food["y"] + dy / distance * step, food["radius"], BOUNDS["height"] - food["radius"])
+                next_x = clamp(food["x"] + dx / distance * step, food["radius"], self.world.bounds_width - food["radius"])
+                next_y = clamp(food["y"] + dy / distance * step, food["radius"], self.world.bounds_height - food["radius"])
                 if next_x != food["x"] or next_y != food["y"]:
                     food["x"], food["y"] = next_x, next_y
                     changed = True

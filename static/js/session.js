@@ -52,6 +52,7 @@ export class LocalSession {
     const survival = world.survival?.getSnapshot(cells, world.elapsed) ?? null;
     return {
       mode: world.mode, survival, result: world.result,
+      map: world.map, obstacles: world.obstacles,
       stats: world.stats.snapshot(this.state === 'gameover'), practice: world.practice?.snapshot() ?? null, regrouping: world.regrouping,
       state: this.state, bounds: world.bounds, player: world.playerGroup,
       playerCells: world.playerCells,

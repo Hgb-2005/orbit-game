@@ -30,6 +30,24 @@ export function avoidSpikes(bot, direction, spikes = []) {
   return unit(direction.x * .25 - normal.y * side + normal.x * .5, direction.y * .25 + normal.x * side + normal.y * .5);
 }
 
+/** 障碍永远不可穿越；预测前方圆形阻挡，贴边时先退出，否则沿切线绕行。 */
+export function avoidObstacles(cell, direction, obstacles = []) {
+  if (!obstacles.length) return direction;
+  const end = { x: cell.x + direction.x * 190, y: cell.y + direction.y * 190 };
+  const danger = obstacles
+    .filter(item => segmentDistance(item, cell, end) < cell.radius + item.radius + 24)
+    .sort((a, b) => distanceSquared(cell, a) - distanceSquared(cell, b))[0];
+  if (!danger) return direction;
+  const ax = cell.x - danger.x;
+  const ay = cell.y - danger.y;
+  const distance = Math.hypot(ax, ay);
+  if (distance < cell.radius + danger.radius + 20) return unit(ax || 1, ay);
+  const normal = unit(ax, ay);
+  const side = direction.x * -normal.y + direction.y * normal.x >= 0 ? 1 : -1;
+  return unit(direction.x * .35 - normal.y * side + normal.x * .65,
+    direction.y * .35 + normal.x * side + normal.y * .65);
+}
+
 /** 决策只返回方向，AI 不直接修改位置；未来可完整迁移到服务器。 */
 export function chooseBotDirection(bot, world) {
   const others = [...world.playerCells, ...world.bots];
@@ -142,6 +160,8 @@ export function chooseBotDirection(bot, world) {
   let direction = unit(dx, dy);
   // 只有挑战档会主动绕刺；简单档被刺扎到后才按真实规则分裂。
   if (difficulty === "challenge") direction = avoidSpikes(bot, direction, world.spikes ?? []);
+  // 实心障碍对全部难度使用相同物理规则，因此所有 AI 都必须主动绕开。
+  direction = avoidObstacles(bot, direction, world.obstacles ?? []);
   dx = direction.x;
   dy = direction.y;
 
