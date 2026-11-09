@@ -478,6 +478,7 @@ export class RemoteSession {
       sprint: owner.sprint, split: owner.split, spore: owner.spore, stage: getStage(owner.score),
       difficulty: getDifficulty(owner.score, owner.peakMass, raw.elapsed), peakMass: owner.peakMass,
       hotspots: raw.hotspots,
+      items: raw.items ? { ...raw.items, combo: owner.itemCombo ?? raw.items.combo ?? { count: 0, remaining: 0, window: 3.5 } } : null,
       safeZone: raw.safeZone ? { ...raw.safeZone, exposure: owner.zoneExposure ?? 0 } : null,
       pings: (raw.pings || []).filter(item => item.expiresAt > raw.elapsed), pingCooldown: owner.pingCooldown ?? 0,
       leaderboard: { kind: "survival", entries: standings.slice(0, 5), player: me, total: standings.length,

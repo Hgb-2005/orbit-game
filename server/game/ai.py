@@ -52,6 +52,7 @@ def decide(owner, cells, world):
             return {'x': dx, 'y': dy, 'target': None, 'regroup': False, 'split': False}
     enemies = [cell for cell in world.all_cells() if cell["ownerId"] != owner["ownerId"]
                and not world.allies(owner, world.players[cell["ownerId"]])
+               and not world.item_system.hidden_from(cell["ownerId"], owner["ownerId"])
                and max(owner["protectedUntil"], world.players[cell["ownerId"]]["protectedUntil"]) <= world.elapsed]
     # 休闲档只觅食和漫游，不读取敌人信息；更高难度才进入追逃决策。
     threat = None
@@ -117,8 +118,16 @@ def decide(owner, cells, world):
                  and not any(segment_distance(spike, bot, prey) < bot["radius"] + spike["radius"] + 20 for spike in world.spikes))
         remember_target(owner, "prey", prey["id"], world.elapsed)
     else:
-        food = min(world.foods, key=lambda item: math.hypot(item["x"] - bot["x"], item["y"] - bot["y"]), default=None)
-        if food:
+        # 休闲档不追特殊道具，避免它的行为受到敌人信息或增益选择影响。
+        item = min((entry for entry in world.item_system.items
+                    if math.hypot(entry["x"] - bot["x"], entry["y"] - bot["y"]) < 620),
+                   key=lambda entry: math.hypot(entry["x"] - bot["x"], entry["y"] - bot["y"]), default=None) \
+            if world.rules.botDifficulty != "casual" else None
+        food = min(world.foods, key=lambda entry: math.hypot(entry["x"] - bot["x"], entry["y"] - bot["y"]), default=None)
+        if item:
+            direction = unit(item["x"] - bot["x"], item["y"] - bot["y"])
+            remember_target(owner, "item", item["id"], world.elapsed)
+        elif food:
             direction = unit(food["x"] - bot["x"], food["y"] - bot["y"])
             remember_target(owner, "food", food.get("id"), world.elapsed)
         else:

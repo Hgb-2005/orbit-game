@@ -27,6 +27,41 @@ ROOM_CAPACITY = 4
 BOT_NAMES = ("人机·薄荷", "人机·追猎", "人机·小橘")
 
 
+def room_item_hidden(world, owner, viewer):
+    """隐身只对敌人隐藏；观察者本人和团队仍能看到完整状态。"""
+    if not owner or not viewer or owner["ownerId"] == viewer["ownerId"]:
+        return False
+    if owner.get("team") is not None and owner.get("team") == viewer.get("team"):
+        return False
+    effects = (world.get("items") or {}).get("effects", {}).get(owner["ownerId"], {})
+    return effects.get("cloak", -1) > world.get("elapsed", 0)
+
+
+def filter_team_standings(world, hidden):
+    """按观察者可见成员重算团队汇总，避免隐身成员从团队总量中泄露。"""
+    teams = world.get("teams") or []
+    if not hidden or not teams:
+        return teams
+    hidden_entries = [entry for entry in world.get("standings", []) if entry["ownerId"] in hidden]
+    filtered = []
+    for team in teams:
+        owners = [entry for entry in hidden_entries if entry.get("team") == team["id"]]
+        filtered.append({
+            **team,
+            "lives": max(0, team["lives"] - sum(entry.get("lives", 0) for entry in owners)),
+            "kills": max(0, team["kills"] - sum(entry.get("kills", 0) for entry in owners)),
+            "mass": max(0, team["mass"] - sum(entry.get("mass", 0) for entry in owners)),
+            "active": max(0, team["active"] - sum(entry.get("lives", 0) > 0 for entry in owners)),
+        })
+    filtered.sort(key=lambda team: (-team["lives"], -team["kills"], -team["mass"], team["id"]))
+    for index, team in enumerate(filtered):
+        previous = filtered[index - 1] if index else None
+        team["rank"] = (previous["rank"] if previous and
+                        all(previous[key] == team[key] for key in ("lives", "kills", "mass"))
+                        else index + 1)
+    return filtered
+
+
 @dataclass
 class Peer:
     id: str
@@ -197,14 +232,32 @@ class RoomManager:
                 cursor = peer.event_cursor if peer.event_round == state["roundId"] else 0
                 events = [event for event in state["world"]["events"] if event["id"] > cursor]
                 viewer = next((owner for owner in state['world']['players'] if owner['ownerId'] == peer_id), None)
+                hidden = {owner['ownerId'] for owner in state['world']['players']
+                          if owner['ownerId'] != peer_id and room_item_hidden(state['world'], owner, viewer)}
+                events = [event for event in events if event.get('ownerId') not in hidden
+                          and event.get('actorId') not in hidden and event.get('attackerId') not in hidden
+                          and event.get('victimId') not in hidden]
+                players = [owner for owner in state['world']['players'] if owner['ownerId'] not in hidden]
+                standings = [entry for entry in state['world'].get('standings', [])
+                             if entry['ownerId'] not in hidden]
+                teams = filter_team_standings(state['world'], hidden)
+                items = state['world'].get('items') or {}
+                items = {**items, 'effects': {owner_id: effects
+                         for owner_id, effects in items.get('effects', {}).items() if owner_id not in hidden}}
+                protection = {owner_id: remaining
+                              for owner_id, remaining in state['world'].get('protectionByOwner', {}).items()
+                              if owner_id not in hidden}
                 # 在序列化之前过滤，敌方浏览器连原始坐标也不会收到。
                 pings = [item for item in state['world'].get('pings', [])
                          if viewer and viewer.get('team') is not None and item['team'] == viewer['team']]
                 # 预测分量只给本人，对手继续使用合成速度插值，避免八分身时扩大所有人的包。
                 cells = [cell if cell['ownerId'] == peer_id else
                          {key: value for key, value in cell.items() if key != 'motion'}
-                         for cell in state['world']['cells']]
-                messages.append(encode({**state, "world": {**state["world"], "events": events, 'pings': pings, 'cells': cells}}))
+                         for cell in state['world']['cells'] if cell['ownerId'] not in hidden]
+                messages.append(encode({**state, "world": {**state["world"], "events": events, 'pings': pings,
+                                                          'cells': cells, 'players': players, 'standings': standings,
+                                                          'teams': teams, 'items': items,
+                                                          'protectionByOwner': protection}}))
                 if events:
                     peer.event_cursor = events[-1]["id"]
                 else:

@@ -1,7 +1,9 @@
 import { CONFIG } from "../config.js";
 
-const PRIORITY = ["celllost", "eat", "spike", "split", "spore", "spore-eat", "sprint", "merge", "food"];
-const INTERVALS = { celllost: 0.25, eat: 0.18, spike: 0.35, split: 0.2, spore: 0.2, "spore-eat": 0.18, sprint: 0.3, merge: 0.25 };
+const PRIORITY = ["celllost", "shield-block", "combo", "item", "effect-end", "eat", "spike", "split",
+  "spore", "spore-eat", "sprint", "merge", "food"];
+const INTERVALS = { celllost: 0.25, "shield-block": 0.4, combo: 0.25, item: 0.3, "effect-end": 0.3,
+  eat: 0.18, spike: 0.35, split: 0.2, spore: 0.2, "spore-eat": 0.18, sprint: 0.3, merge: 0.25 };
 const CUES = {
   food: [{ note: 76, duration: 0.075, gain: 0.1 }],
   eat: [{ note: 64, duration: 0.14, gain: 0.17 }, { note: 72, delay: 0.045, duration: 0.14, gain: 0.14 }, { note: 79, delay: 0.09, duration: 0.12, gain: 0.1 }],
@@ -12,6 +14,12 @@ const CUES = {
   merge: [{ note: 67, duration: 0.18, gain: 0.14 }, { note: 72, delay: 0.07, duration: 0.2, gain: 0.12 }],
   sprint: [{ note: 72, endNote: 84, duration: 0.1, gain: 0.1 }],
   celllost: [{ note: 64, endNote: 55, duration: 0.18, gain: 0.14 }],
+  item: [{ note: 74, duration: 0.1, gain: 0.12 }, { note: 81, delay: 0.055, duration: 0.15, gain: 0.13 }],
+  "shield-block": [{ note: 57, endNote: 69, duration: 0.2, gain: 0.17 },
+    { note: 69, delay: 0.08, duration: 0.12, gain: 0.08 }],
+  "effect-end": [{ note: 72, endNote: 60, duration: 0.2, gain: 0.07 }],
+  combo: [{ note: 72, duration: 0.08, gain: 0.12 }, { note: 76, delay: 0.055, duration: 0.08, gain: 0.13 },
+    { note: 83, delay: 0.11, duration: 0.18, gain: 0.15 }],
 };
 
 /** 与背景音乐共用音频设备，但使用独立音量总线和开关；不保存或重放旧事件。 */

@@ -9,8 +9,8 @@
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0200">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0200">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0210">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0210">
     </script>
   </head>
   <body>
@@ -252,9 +252,11 @@
                 </button>
                 <div class="cell-status"><strong id="cell-count">1 / 8 分身</strong><span class="group-mass">总质量 <b id="group-mass">36</b></span><span id="cell-quality">最大 36 · 最小 36</span><span id="merge-status">长大后右键 / Q / W 分身</span></div>
               </div>
+              <div id="item-effect-hud" aria-label="当前地图道具效果" hidden></div>
+              <div id="combo-hud" aria-live="polite" hidden></div>
               <div id="game-overlay" class="game-overlay">
                 <div class="overlay-card">
-                  <div class="release-badge">V0.20.0 <span>阶段 1 · 流体视觉 · Canvas 可回退</span></div>
+                  <div class="release-badge">V0.21.0 <span>阶段 2 · 地图道具 · 连击反馈</span></div>
                   <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
                     <span>
                     </span>
@@ -607,7 +609,7 @@
             <i>
               /
             </i>
-            V.0200
+            V.0210
           </span>
         </footer>
         <noscript>

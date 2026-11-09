@@ -46,6 +46,7 @@ export function chooseBotDirection(bot, world) {
   // 休闲档只觅食和漫游，不读取敌人信息；这是难度差异，不改变移动或吞噬规则。
   if (difficulty !== "casual") {
     const enemies = others.filter(other => other.ownerId !== bot.ownerId && other.alive &&
+      !world.itemSystem?.hiddenFrom(other.ownerId, bot.ownerId) &&
       !world.isProtected?.(other) && !(other.isPlayer && world.protectionRemaining > 0));
     for (const other of enemies) {
       const distance = distanceSquared(bot, other);
@@ -98,24 +99,34 @@ export function chooseBotDirection(bot, world) {
     }
     rememberTarget(bot, "prey", prey.id, now);
   } else {
-    let closest = null;
-    let closestDistance = Infinity;
-    for (const food of world.foods) {
-      const distance = distanceSquared(bot, food);
-      if (distance < closestDistance) {
-        closest = food;
-        closestDistance = distance;
-      }
-    }
-    if (closest) {
-      dx = closest.x - bot.x;
-      dy = closest.y - bot.y;
-      rememberTarget(bot, "food", closest.id, now);
+    const item = difficulty === "casual" ? null : (world.itemSystem?.items ?? [])
+      .filter(candidate => candidate.x >= 0 && candidate.y >= 0)
+      .sort((a, b) => distanceSquared(bot, a) - distanceSquared(bot, b))[0];
+    if (item && distanceSquared(bot, item) < (role.forageRange ?? 620) ** 2) {
+      // 安全时优先拿道具；敌人和猎物仍拥有更高决策优先级。
+      dx = item.x - bot.x;
+      dy = item.y - bot.y;
+      rememberTarget(bot, "item", item.id, now);
     } else {
-      const angle = idNumber(bot.id) * .37 + now * .17;
-      dx = Math.cos(angle);
-      dy = Math.sin(angle);
-      rememberTarget(bot, "wander", null, now);
+      let closest = null;
+      let closestDistance = Infinity;
+      for (const food of world.foods) {
+        const distance = distanceSquared(bot, food);
+        if (distance < closestDistance) {
+          closest = food;
+          closestDistance = distance;
+        }
+      }
+      if (closest) {
+        dx = closest.x - bot.x;
+        dy = closest.y - bot.y;
+        rememberTarget(bot, "food", closest.id, now);
+      } else {
+        const angle = idNumber(bot.id) * .37 + now * .17;
+        dx = Math.cos(angle);
+        dy = Math.sin(angle);
+        rememberTarget(bot, "wander", null, now);
+      }
     }
   }
 

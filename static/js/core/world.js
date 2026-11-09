@@ -11,6 +11,7 @@ import { collidesWithSpike, createSpikes, feedSpikes, updateSpikes } from "./spi
 import { SpatialGrid } from "./spatial-grid.js";
 import { RoundStats } from "./round-stats.js";
 import { PracticeCourse } from "./practice.js";
+import { ItemSystem } from "./items.js";
 
 /** 纯游戏状态与规则，不访问 DOM、Canvas、网络和数据库。 */
 export class World {
@@ -27,6 +28,7 @@ export class World {
     this.stats = new RoundStats();
     this.regrouping = false;
     this.botDifficulty = Object.hasOwn(BOT_SKILLS, options.botDifficulty) ? options.botDifficulty : "standard";
+    this.itemMode = Object.hasOwn(CONFIG.items.modes, options.itemMode) ? options.itemMode : "standard";
     this.result = null;
     this.nextId = 0;
     this.elapsed = 0;
@@ -49,6 +51,8 @@ export class World {
     this.foodGrid = new SpatialGrid(CONFIG.spatial.cellSize);
     this.sporeGrid = new SpatialGrid(CONFIG.spatial.cellSize);
     this.spikeGrid = new SpatialGrid(CONFIG.spatial.cellSize);
+    this.itemSystem = new ItemSystem(this.random);
+    this.itemSystem.reset(this.itemMode);
     this.botSplitCooldowns = new Map();
     this.stage = getStage(0);
     this.difficulty = getDifficulty(0, this.peakMass, 0);
@@ -195,7 +199,8 @@ export class World {
         const strength = Math.min(1, Math.max(0, (length - 5) / 75));
         cellDirection = length > 0 ? { x: dx / length * strength, y: dy / length * strength } : { x: 0, y: 0 };
       }
-      moveBall(cell, cellDirection, dt, this.bounds, this.sprint.remaining > 0 ? CONFIG.sprint.multiplier : 1);
+      moveBall(cell, cellDirection, dt, this.bounds,
+        (this.sprint.remaining > 0 ? CONFIG.sprint.multiplier : 1) * this.itemSystem.speedMultiplier("player"));
     }
 
     if (!this.practice) this.updateBotSplits(dt);
@@ -205,7 +210,7 @@ export class World {
         bot.direction = chooseBotDirection(bot, this);
         bot.thinkTimer = BOT_SKILLS[this.botDifficulty].reaction + this.random() * 0.1;
       }
-      moveBall(bot, bot.direction, dt, this.bounds);
+      moveBall(bot, bot.direction, dt, this.bounds, this.itemSystem.speedMultiplier(bot.ownerId));
     }
 
     const sporePressed = Boolean(input.spore);
@@ -225,6 +230,7 @@ export class World {
     for (const { spore, eater } of sporeResult.consumed) {
       if (eater.isPlayer) this.events.push({ type: "spore-eat", x: spore.x, y: spore.y, color: spore.color, mass: spore.mass });
     }
+    this.events.push(...this.itemSystem.update(dt, this));
     this.consumeFood();
     this.stats.observe(this.playerCells);
     this.consumeBalls();
@@ -429,8 +435,15 @@ export class World {
       for (const prey of candidates) {
         if (eater.id === prey.id) continue;
         if (this.practice && prey.isPlayer) continue;
-        if (this.isProtected(eater) || this.isProtected(prey)) continue;
         if (!canEat(eater, prey)) continue;
+        if (this.isProtected(eater) || this.isProtected(prey)) continue;
+        if (this.itemSystem.shieldActive(prey.ownerId)) {
+          if (this.itemSystem.recordShieldBlock(prey.ownerId, eater.ownerId)) {
+            this.events.push({ type: "shield-block", ownerId: prey.ownerId, isPlayer: prey.isPlayer,
+              attackerId: eater.ownerId, x: prey.x, y: prey.y, color: eater.color });
+          }
+          continue;
+        }
         // 同一猎物只接受质量最高、ID 稳定的第一个合法捕食者。
         if (!claims.has(prey.id)) claims.set(prey.id, { eater, prey, mass: prey.mass });
       }
@@ -448,7 +461,10 @@ export class World {
       if (eater.isPlayer) {
         this.score += Math.round(mass);
         this.eatenBalls++;
-        this.events.push({ type: "eat", x: prey.x, y: prey.y, color: prey.color, mass });
+        const combo = this.itemSystem.registerEat(eater.ownerId);
+        this.events.push({ type: "eat", x: prey.x, y: prey.y, color: prey.color, mass, combo: combo.count });
+        if (combo.count >= 2) this.events.push({ type: "combo", ownerId: eater.ownerId,
+          isPlayer: eater.isPlayer, count: combo.count, x: prey.x, y: prey.y, color: eater.color });
       }
       if (prey.isPlayer) {
         this.killer = eater.name;
@@ -466,6 +482,7 @@ export class World {
           else this.events.push({ type: "eliminated", ownerId: victim.ownerId, isPlayer: victim.isPlayer, name: victim.name });
         }
       }
+      if (remaining.get(prey.ownerId) === 0) this.itemSystem.clearOwner(prey.ownerId);
     }
     if (settled.length && this.playerCells.some(cell => cell.alive)) this.stats.observe(this.playerCells);
     this.lastPlayer = this.player;
@@ -500,6 +517,7 @@ export class World {
       this.split = new SplitAbility();
       this.sporeCooldown = 0;
       this.sporeWasPressed = false;
+      this.itemSystem.clearOwner(owner.ownerId);
       this.stats.sample(this.elapsed, [ball], true);
     } else this.bots.push(ball);
     this.events.push({ type: "respawn", ownerId: owner.ownerId, isPlayer: owner.isPlayer,

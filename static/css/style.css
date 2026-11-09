@@ -1739,3 +1739,134 @@ kbd {
 .practice-checkpoints li{opacity:.5}.practice-checkpoints li[aria-current=step]{opacity:1;font-weight:600}.practice-checkpoints li[data-done=true]{opacity:.7;text-decoration:line-through}
 #practice-save-note{font-size:11px;line-height:1.6}#guided-practice,#recap-practice{min-height:44px;white-space:normal}
 @media(max-width:600px){.practice-checkpoints{font-size:10px;max-width:220px}.practice-hud{gap:8px}.practice-copy{min-width:0}}
+
+/* 21. v0.21 地图道具与连击：HUD 只读模拟快照，并参与 Canvas 标签避让。 */
+#item-effect-hud {
+  position: absolute;
+  left: 18px;
+  bottom: 151px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap-reverse;
+  gap: 6px;
+  max-width: 350px;
+  pointer-events: none;
+}
+
+.item-effect-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 4px 18px #0002;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+}
+
+.item-effect-chip i {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  color: #111817;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.item-effect-chip[data-effect="shield"] { color: #82b8d8; border-color: #82b8d866; }
+.item-effect-chip[data-effect="magnet"] { color: #d7bc77; border-color: #d7bc7766; }
+.item-effect-chip[data-effect="speed"] { color: #dd8f82; border-color: #dd8f8266; }
+.item-effect-chip[data-effect="cloak"] { color: #b2a4dc; border-color: #b2a4dc66; }
+
+#combo-hud {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px;
+  color: var(--gold);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 58%, var(--border));
+  border-radius: 999px;
+  box-shadow: 0 8px 28px #0003;
+  pointer-events: none;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  animation: combo-arrive .18s ease-out;
+}
+
+#combo-hud span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes combo-arrive {
+  from { opacity: 0; transform: translate(-50%, -5px) scale(.96); }
+}
+
+html[data-theme="light"] .item-effect-chip,
+html[data-theme="light"] #combo-hud {
+  box-shadow: 0 6px 24px #27443814;
+}
+
+.focus-mode #item-effect-hud { bottom: 133px; }
+
+@media (max-width: 760px) {
+  #item-effect-hud {
+    left: 12px;
+    bottom: 185px;
+    max-width: calc(100% - 178px);
+    gap: 4px;
+  }
+  .item-effect-chip {
+    min-height: 24px;
+    padding: 4px 6px;
+    font-size: 9px;
+  }
+  .item-effect-chip i {
+    width: 16px;
+    height: 16px;
+    font-size: 8px;
+  }
+  #combo-hud {
+    top: 10px;
+    max-width: calc(100% - 178px);
+    padding: 6px 9px;
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  #item-effect-hud { bottom: 205px; max-width: calc(100% - 150px); }
+  #combo-hud { left: 12px; transform: none; }
+  @keyframes combo-arrive {
+    from { opacity: 0; transform: translateY(-5px) scale(.96); }
+  }
+}
+
+@media (pointer: coarse), (max-width: 760px) {
+  #item-effect-hud { margin-bottom: var(--tactical-height, 0px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #combo-hud { animation: none; }
+}

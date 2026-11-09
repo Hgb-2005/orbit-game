@@ -65,6 +65,7 @@ export class LocalSession {
         getLeaderboard(cells),
       metrics: { simulationMs: this.simulationMs, collisionMs: world.lastCollisionMs || 0 },
       hotspots: world.hotspots.getSnapshot(),
+      items: world.itemSystem.snapshot("player"),
     };
   }
 }

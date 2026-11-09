@@ -35,11 +35,17 @@ export class CombatFeedback {
       }
       const text = event.type === "eat" || event.type === "spore-eat" ? `+${Math.round(event.mass || 0)} m` :
         event.type === "celllost" ? `−${Math.round(event.mass || 0)} m` :
-        event.type === "spike" ? "扎刺 −8%" : event.type === "spike-launch" ? "反击刺！" : "";
+        event.type === "spike" ? "扎刺 −8%" : event.type === "spike-launch" ? "反击刺！" :
+        event.type === "item" ? `+${event.label || "道具"}` :
+        event.type === "shield-block" ? "护盾挡下" :
+        event.type === "combo" ? `${event.count || 2} 连吞` : "";
       const bad = ["celllost", "spike"].includes(event.type);
-      if (text) this.addFloat({ ...event, text, bad, duration: 1.1, life: 1.1 });
-      if (["eat", "spore-eat", "split", "merge", "celllost", "spike", "spike-feed", "spike-launch"].includes(event.type)) {
-        this.rings.push({ ...event, bad, life: .55, duration: .55 });
+      const duration = event.type === "combo" ? 1.35 : event.type === "item" ? 1.15 : 1.1;
+      if (text) this.addFloat({ ...event, text, bad, duration, life: duration });
+      if (["eat", "spore-eat", "split", "merge", "celllost", "spike", "spike-feed", "spike-launch",
+        "item", "shield-block", "combo"].includes(event.type)) {
+        const ringDuration = event.type === "combo" ? 1.1 : .55;
+        this.rings.push({ ...event, bad, life: ringDuration, duration: ringDuration });
         this.rings = this.rings.slice(-32);
       }
     }

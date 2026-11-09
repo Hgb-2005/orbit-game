@@ -69,7 +69,7 @@ export class Renderer {
     if (this.reducedMotion || this.visuals.particles <= 0) return;
     for (const event of events) {
       if (!["food", "eat", "split", "merge", "celllost", "respawn", "spore", "spore-eat",
-        "spike", "spike-feed", "spike-launch"].includes(event.type)) continue;
+        "spike", "spike-feed", "spike-launch", "item", "shield-block", "combo"].includes(event.type)) continue;
       if (event.type === "respawn" && !event.isPlayer) continue;
       const room = Math.max(0, this.visuals.particles - this.particlePool.activeCount);
       if (!room) break;
@@ -85,6 +85,12 @@ export class Renderer {
       } else if (event.type === "celllost") {
         this.particlePool.burst(event.x, event.y, "#ed9f94",
           Math.min(room, 10), PARTICLE_KIND.SWIRL);
+      } else if (event.type === "item" || event.type === "shield-block") {
+        this.particlePool.burst(event.x, event.y, event.color || "#82b8d8",
+          Math.min(room, event.type === "shield-block" ? 9 : 7), PARTICLE_KIND.SPARK);
+      } else if (event.type === "combo") {
+        this.particlePool.burst(event.x, event.y, "#e0bd80",
+          Math.min(room, 12), PARTICLE_KIND.SWIRL);
       } else {
         this.particlePool.burst(event.x, event.y, color,
           Math.min(room, event.type === "split" ? 8 : 5), PARTICLE_KIND.BURST);
@@ -197,6 +203,7 @@ export class Renderer {
     }
     ctx.globalAlpha = 1;
 
+    this.drawItems(snapshot);
     this.drawSafeZone(snapshot);
     if (this.previewEnabled) this.drawSplitPreview(snapshot, colors);
 
@@ -293,6 +300,39 @@ export class Renderer {
       ctx.strokeStyle = this.theme === 'dark' ? '#e0bd80' : '#9a7329';
       ctx.setLineDash([10 / this.camera.zoom, 7 / this.camera.zoom]);
       ctx.beginPath(); ctx.arc(zone.x, zone.y, zone.nextRadius, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** 道具只用色块、符号和脉冲绘制，关闭全部特效时仍能清楚辨认。 */
+  drawItems(snapshot) {
+    const items = snapshot.items?.items;
+    if (!items?.length) return;
+    const { ctx, camera } = this;
+    const pulse = this.reducedMotion ? 0 : (Math.sin(performance.now() / 210) + 1) / 2;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const item of items) {
+      if (!this.visible(item)) continue;
+      const radius = item.radius || 12;
+      ctx.globalAlpha = 0.12 + pulse * 0.08;
+      ctx.fillStyle = item.color;
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, radius + 7 + pulse * 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.96;
+      ctx.fillStyle = this.theme === "dark" ? "#142019" : "#f7f5eb";
+      ctx.strokeStyle = item.color;
+      ctx.lineWidth = 2 / camera.zoom;
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = item.color;
+      ctx.font = `700 ${Math.max(10, radius * 0.9) / camera.zoom}px 'Microsoft YaHei', sans-serif`;
+      ctx.fillText(item.symbol || "", item.x, item.y + 1 / camera.zoom);
     }
     ctx.restore();
   }
@@ -441,7 +481,8 @@ export class Renderer {
       const y = point.y - 18 - (this.reducedMotion ? 0 : (1 - item.life / item.duration) * 30);
       ctx.strokeStyle = colors.background; ctx.lineWidth = 4;
       ctx.strokeText(item.text, point.x, y);
-      ctx.fillStyle = item.bad ? (this.theme === "dark" ? "#f0a69b" : "#a94138") : colors.player;
+      ctx.fillStyle = item.bad ? (this.theme === "dark" ? "#f0a69b" : "#a94138") :
+        item.color || colors.player;
       ctx.fillText(item.text, point.x, y);
     }
     ctx.restore();
@@ -510,6 +551,7 @@ export class Renderer {
       ctx.stroke();
       ctx.setLineDash([]);
     }
+    this.drawItemAura(ball, snapshot, radius);
     if (ball.isPlayer && snapshot.playerCells.length > 1) {
       ctx.strokeStyle = colors.player;
       ctx.globalAlpha = 0.7;
@@ -535,6 +577,66 @@ export class Renderer {
     ctx.font = `500 ${Math.max(10, Math.min(19, radius * 0.4))}px 'Microsoft YaHei', sans-serif`;
     ctx.fillText(ball.name, ball.x, ball.y, radius * 1.7);
     ctx.restore();
+  }
+
+  drawItemAura(ball, snapshot, radius) {
+    const effects = snapshot.items?.effects?.[ball.ownerId];
+    if (!effects) return;
+    const active = type => (effects[type] ?? 0) > snapshot.elapsed;
+    const { ctx, camera } = this;
+    const rotation = this.reducedMotion ? 0 : snapshot.elapsed * 1.4;
+    if (active("shield")) {
+      ctx.save();
+      ctx.strokeStyle = "#82b8d8";
+      ctx.lineWidth = 3 / camera.zoom;
+      ctx.globalAlpha = .88;
+      ctx.setLineDash([10 / camera.zoom, 5 / camera.zoom]);
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, radius + 9 / camera.zoom, rotation, rotation + Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = .28;
+      ctx.lineWidth = 7 / camera.zoom;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, radius + 9 / camera.zoom, rotation, rotation + Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (active("magnet")) {
+      ctx.save();
+      ctx.strokeStyle = "#d7bc77";
+      ctx.globalAlpha = .42;
+      ctx.lineWidth = 1.25 / camera.zoom;
+      ctx.setLineDash([2 / camera.zoom, 7 / camera.zoom]);
+      ctx.lineDashOffset = -rotation * 7;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, radius + 14 / camera.zoom, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (active("speed")) {
+      ctx.save();
+      ctx.strokeStyle = "#dd8f82";
+      ctx.globalAlpha = .78;
+      ctx.lineWidth = 2 / camera.zoom;
+      for (let index = 0; index < 3; index++) {
+        const start = rotation * 1.8 + index * Math.PI * 2 / 3;
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, radius + 6 / camera.zoom, start, start + .34);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    if (active("cloak")) {
+      ctx.save();
+      ctx.strokeStyle = "#b2a4dc";
+      ctx.globalAlpha = .72;
+      ctx.lineWidth = 1.5 / camera.zoom;
+      ctx.setLineDash([3 / camera.zoom, 5 / camera.zoom]);
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, radius + 18 / camera.zoom, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   dispose() {
@@ -675,6 +777,13 @@ export class Renderer {
       ctx.globalAlpha = 0.9;
       ctx.beginPath();
       ctx.arc(x + spike.x * sx, y + spike.y * sy, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const item of snapshot.items?.items || []) {
+      ctx.fillStyle = item.color || "#d7bc77";
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.arc(x + item.x * sx, y + item.y * sy, 1.9, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.globalAlpha = 1;

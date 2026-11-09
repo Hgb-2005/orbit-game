@@ -27,6 +27,7 @@ class RoomRules:
     botDifficulty: str = "standard"
     foodDensity: str = "normal"
     initialMass: int = 36
+    itemMode: str = "standard"
 
     @classmethod
     def parse(cls, value=None):
@@ -41,6 +42,7 @@ class RoomRules:
             raise ValueError("对局时长只能选择 3、5 或 8 分钟。")
         bots, difficulty = value.get("botCount", -1), value.get("botDifficulty", "standard")
         density, mass = value.get("foodDensity", "normal"), value.get("initialMass", 36)
+        items = value.get("itemMode", "standard")
         if type(bots) is not int or bots not in (-1, 0, 1, 2, 3):
             raise ValueError("人机数量只能自动补满或选择 0～3 名。")
         if difficulty not in ("casual", "standard", "challenge"):
@@ -49,13 +51,16 @@ class RoomRules:
             raise ValueError("请选择稀疏、标准或密集食物。")
         if type(mass) is not int or mass not in (36, 72, 144):
             raise ValueError("开局质量只能选择 36、72 或 144 m。")
+        if items not in ("off", "standard", "rich"):
+            raise ValueError("道具刷新只能选择关闭、标准或丰富。")
         if mode == "teams" and bots != -1:
             raise ValueError("2v2 团队需要自动补满四席。")
-        return cls(mode, duration, bots, difficulty, density, mass)
+        return cls(mode, duration, bots, difficulty, density, mass, items)
 
     @property
     def ranked(self):
-        return self.mode != "shrink" and self.botCount == -1 and self.botDifficulty == "standard" and self.foodDensity == "normal" and self.initialMass == 36
+        return (self.mode != "shrink" and self.botCount == -1 and self.botDifficulty == "standard"
+                and self.foodDensity == "normal" and self.initialMass == 36 and self.itemMode == "standard")
 
     def ai_count(self, humans):
         free = max(0, 4 - humans)

@@ -25,6 +25,21 @@ export const CONFIG = Object.freeze({
   music: { tempo: 76, defaultVolume: 0.3, outputGain: 0.65, lookAhead: 0.16, timerInterval: 50 },
   effects: { volume: 0.28, maxVoices: 12, globalInterval: 0.045, foodInterval: 0.14 },
   hotspots: { count: 2, radius: 190, duration: 45, foodRatio: 0.36, separation: 650 },
+  // 地图道具由世界维护计时，客户端只负责表现；关闭模式仍保留字段便于回退。
+  items: {
+    pickupPadding: 12, comboWindow: 3.5, speedMultiplier: 1.45, magnetRadius: 230, magnetSpeed: 420,
+    modes: {
+      off: { maxCount: 0, refillInterval: 0 },
+      standard: { maxCount: 18, refillInterval: 4.5 },
+      rich: { maxCount: 36, refillInterval: 2.4 },
+    },
+    types: {
+      shield: { duration: 8, label: "护盾", color: "#82b8d8", symbol: "盾" },
+      magnet: { duration: 10, label: "磁铁", color: "#d7bc77", symbol: "磁" },
+      speed: { duration: 7, label: "加速", color: "#dd8f82", symbol: "速" },
+      cloak: { duration: 7, label: "隐身", color: "#b2a4dc", symbol: "隐" },
+    },
+  },
   feedback: { skillReadySeconds: 0.9, hotspotWarningSeconds: 5, hotspotHighlightSeconds: 3 },
   labels: { detailZoom: 0.55, detailDistance: 360 },
   spatial: { cellSize: 180 },

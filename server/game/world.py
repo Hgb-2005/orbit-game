@@ -12,6 +12,7 @@ from .stats import RoundStats
 from .ai import decide, avoid_spikes, PROFILES
 from .safe_zone import SafeZone
 from .signals import TeamSignals
+from .items import COMBO_WINDOW, ItemSystem
 
 COLORS = ["#b4efcc", "#dd998d", "#b2a4dc", "#88adc9"]
 BOT_NAMES = ["人机·薄荷", "人机·追猎", "人机·小橘"]
@@ -111,6 +112,7 @@ class MultiplayerWorld:
             owner["stats"].observe(self.cells[owner_id])
             owner['stats'].sample(0, self.cells[owner_id], True)
         self.foods = [self.create_food() for _ in range(self.food_count)]
+        self.item_system = ItemSystem(self, self.rules.itemMode)
         self.spike_grid.build(self.spikes)
 
     def new_id(self, prefix):
@@ -219,6 +221,7 @@ class MultiplayerWorld:
             event_type = event.pop("type")
             self.emit(event_type, **event)
         self.spores = [spore for spore in self.spores if spore["alive"]]
+        self.item_system.update(dt)
         self.consume_food()
         self.consume_spores()
         self.handle_spikes()
@@ -340,7 +343,7 @@ class MultiplayerWorld:
                 cell_direction = (dx / length * strength, dy / length * strength) if length else (0, 0)
             if owner["isBot"]:
                 cell_direction = avoid_spikes(cell, cell_direction, self.spikes)
-            move(cell, cell_direction, dt)
+            move(cell, cell_direction, dt, self.item_system.speed_multiplier(owner["ownerId"]))
         # 收包序号用于去重；只有真正参与物理步的输入才能确认给预测端。
         owner["appliedSeq"] = owner["lastSeq"]
 
@@ -431,11 +434,16 @@ class MultiplayerWorld:
                 attacker, victim = self.players[eater["ownerId"]], self.players[prey["ownerId"]]
                 if self.allies(attacker, victim):
                     continue
-                if max(attacker["protectedUntil"], victim["protectedUntil"]) > self.elapsed:
-                    continue
                 eat_distance = eater["radius"] - prey["radius"]
                 if ((eater["x"] - prey["x"]) ** 2 + (eater["y"] - prey["y"]) ** 2
                         >= eat_distance ** 2):
+                    continue
+                if max(attacker["protectedUntil"], victim["protectedUntil"]) > self.elapsed:
+                    continue
+                if self.item_system.shield_active(victim["ownerId"]):
+                    if self.item_system.record_shield_block(victim["ownerId"]):
+                        self.emit("shield-block", victim, attackerId=attacker["ownerId"], x=prey["x"],
+                                  y=prey["y"], color=attacker["color"])
                     continue
                 # Cells are visited largest first; the first claim has stable priority.
                 claims.setdefault(id(prey), {
@@ -459,9 +467,12 @@ class MultiplayerWorld:
             attacker, victim, prey_mass = claim["attacker"], claim["victim"], claim["mass"]
             attacker["score"] += math.floor(prey_mass + .5)
             attacker["eatenBalls"] += 1
+            combo = self.item_system.register_eat(attacker["ownerId"])
             victim["killer"] = attacker["name"]
             counts[prey["ownerId"]] -= 1
-            self.emit("eat", attacker, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey_mass)
+            self.emit("eat", attacker, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey_mass, combo=combo)
+            if combo >= 2:
+                self.emit("combo", attacker, count=combo, x=prey["x"], y=prey["y"], color=attacker["color"])
             attacker["stats"].observe(self.cells[eater["ownerId"]])
             if counts[prey["ownerId"]] > 0:
                 self.emit("celllost", victim, x=prey["x"], y=prey["y"], color=prey["color"], mass=prey_mass)
@@ -472,11 +483,12 @@ class MultiplayerWorld:
             victim["stats"].death(self.elapsed, "eaten", attacker["name"], prey_mass)
             attacker["lives"] += 1
             attacker["kills"] += 1
-            self.emit("life", attacker, lives=attacker["lives"], victim=victim["name"])
+            self.emit("life", attacker, lives=attacker["lives"], victim=victim["name"], victimId=victim["ownerId"])
             if victim["lives"] > 0:
                 respawns.append(victim)
             else:
                 self.emit("eliminated", victim, name=victim["name"])
+            self.item_system.clear_owner(victim["ownerId"])
         for owner_id in self.cells:
             self.cells[owner_id] = [cell for cell in self.cells[owner_id] if cell["alive"]]
         for owner in respawns:
@@ -512,6 +524,7 @@ class MultiplayerWorld:
         x, y = max(candidates, key=clearance)
         cell = ball(self.new_id("cell"), owner, {"x": x, "y": y})
         self.cells[owner["ownerId"]] = [cell]
+        self.item_system.clear_owner(owner["ownerId"])
         self.stop_input(owner)
         owner.update(protectedUntil=self.elapsed + 3, sprintRemaining=0, sprintCooldown=0, splitCooldown=0, sporeCooldown=0, zoneExposure=0)
         self.emit("respawn", owner, lives=owner["lives"], x=x, y=y, color=owner["color"])
@@ -646,6 +659,7 @@ class MultiplayerWorld:
                             "regrouping": owner["input"].get("regroup", False) and len(self.cells[owner_id]) > 1,
                             "stats": owner["stats"].snapshot(self.finished), "zoneExposure": owner['zoneExposure'],
                             "teamAction": owner.get('teamAction', ''),
+                            "itemCombo": self.item_system.combo(owner_id),
                             "pingCooldown": self.signals.remaining(owner_id, self.elapsed)})
         standings = self.standings()
         # 合成速度供对手插值；独立运动分量供本人重放移动。快照均为独立副本。
@@ -662,6 +676,7 @@ class MultiplayerWorld:
                             "collisionMs": round(self.last_collision_ms, 3)},
                 "cells": cells, "foods": self.foods, "spores": [dict(spore) for spore in self.spores],
                 "spikes": [dict(spike) for spike in self.spikes], "hotspots": dict(self.hotspots), "players": players,
+                "items": self.item_system.snapshot(),
                 "standings": standings, "finished": self.finished, "reason": self.reason,
                 "protectionByOwner": {key: max(0, p["protectedUntil"] - self.elapsed) for key, p in self.players.items()},
                 "events": list(self.events)}

@@ -32,7 +32,8 @@ export class GameUI {
     this.practiceProgress = readPracticeProgress();
     this.practiceSavedAt = null;
     this.onModeChange = () => {};
-    this.labelObstacles = [...document.querySelectorAll(".arena-corner, .canvas-stage, .hotspot-status, #danger-hint, #leaderboard, #protection-hint, #ability-panel, #milestone-banner, #touch-joystick")];
+    this.lastItemEffects = new Set();
+    this.labelObstacles = [...document.querySelectorAll(".arena-corner, .canvas-stage, .hotspot-status, #danger-hint, #leaderboard, #protection-hint, #ability-panel, #item-effect-hud, #combo-hud, #milestone-banner, #touch-joystick")];
     $("leaderboard").open = !window.matchMedia("(max-width: 760px)").matches;
     try {
       this.theme = localStorage.getItem("orbit.theme") === "light" ? "light" : "dark";
@@ -132,6 +133,16 @@ export class GameUI {
       }
       if (event.type === "celllost") this.toast("一个分身被吞噬，控制剩余分身继续生长");
       if (event.type === "hotspots") this.toast("微光富集区已换位，查看小地图里的金圈");
+      if (event.type === "item" && event.isPlayer) {
+        const duration = CONFIG.items.types[event.itemType]?.duration;
+        this.toast(`拾取${event.label ?? "地图道具"}${duration ? ` · 持续 ${duration} 秒` : ""}`);
+      }
+      if (event.type === "shield-block" && event.isPlayer) this.toast("护盾挡住了吞噬");
+      if (event.type === "effect-end" && event.isPlayer) this.toast(`${event.label ?? "地图道具"}效果结束`);
+      if (event.type === "combo" && event.isPlayer) {
+        this.toast(`连续吞噬 ×${event.count}`);
+        $("feedback-announcement").textContent = `连续吞噬 ${event.count} 次`;
+      }
       if (event.type === "departed") this.toast(`「${event.name}」已退出，本局按出局处理`);
       if (event.type === "eliminated" && event.isPlayer) this.toast("命数归零，进入观战；对局结束后可准备下一局");
       if (event.type === "life" && event.isPlayer) this.toast(`击败「${event.victim}」 · +1 命，现有 ${event.lives} 条命`);
@@ -154,6 +165,11 @@ export class GameUI {
     clearTimeout(this.toastTimer);
     $("toast").hidden = true;
     $("milestone-banner").hidden = true;
+    $("item-effect-hud").hidden = true;
+    $("combo-hud").hidden = true;
+    $("item-effect-hud").replaceChildren();
+    $("combo-hud").replaceChildren();
+    this.lastItemEffects.clear();
     for (const ability of ["split", "spore"]) $(`${ability}-button`).classList.remove("ready-cue");
     $("feedback-announcement").textContent = "";
     this.feedbackPhase = "normal";
@@ -355,6 +371,7 @@ export class GameUI {
     $("merge-status").textContent = split.count < 2 ? "长大后右键 / Q / W 分身" : split.merging ? "正在靠拢合体" : `${split.mergeRemaining.toFixed(1)}s 后可合体`;
     $("protection-hint").hidden = snapshot.state !== "playing" || snapshot.spectating || snapshot.protectionRemaining <= 0;
     $("protection-seconds").textContent = Math.ceil(snapshot.protectionRemaining);
+    this.renderItemHud(snapshot);
     if (this.lastState === snapshot.state) return;
     this.lastState = snapshot.state;
     this.renderOverlay(snapshot);
@@ -464,6 +481,47 @@ export class GameUI {
     $("overlay-footnote").textContent = copy.footnote;
     $("result-score").textContent = number(snapshot.score);
     $("result-time").textContent = formatTime(snapshot.stats?.activeSeconds ?? snapshot.elapsed);
+  }
+
+  /**
+   * 道具与连击全部读取模拟快照。暂停时 elapsed 不推进，所以这两个 HUD
+   * 会自然冻结，不会出现暂停后倒计时仍继续减少的情况。
+   */
+  renderItemHud(snapshot) {
+    const ownerId = snapshot.player?.ownerId ?? "player";
+    const effects = snapshot.items?.effects?.[ownerId] ?? {};
+    const active = Object.entries(effects)
+      .filter(([type, until]) => CONFIG.items.types[type] && until > snapshot.elapsed)
+      .map(([type, until]) => ({ type, remaining: Math.max(0, until - snapshot.elapsed) }))
+      .sort((a, b) => b.remaining - a.remaining);
+    const hidden = snapshot.state === "ready" || snapshot.state === "gameover" || snapshot.spectating || active.length === 0;
+    const itemHud = $("item-effect-hud");
+    itemHud.hidden = hidden;
+    if (!hidden) {
+      itemHud.replaceChildren(...active.map(({ type, remaining }) => {
+        const definition = CONFIG.items.types[type];
+        const chip = document.createElement("span");
+        chip.className = "item-effect-chip";
+        chip.dataset.effect = type;
+        chip.title = `${definition.label}剩余 ${remaining.toFixed(1)} 秒`;
+        const icon = document.createElement("i");
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = definition.symbol;
+        const copy = document.createElement("span");
+        copy.textContent = `${definition.label} ${Math.ceil(remaining)}s`;
+        chip.append(icon, copy);
+        return chip;
+      }));
+    }
+    this.lastItemEffects = new Set(active.map(effect => effect.type));
+
+    const combo = snapshot.items?.combo ?? { count: 0, remaining: 0 };
+    const comboHud = $("combo-hud");
+    comboHud.hidden = snapshot.state !== "playing" || snapshot.spectating || combo.count < 2 || combo.remaining <= 0;
+    if (!comboHud.hidden) {
+      comboHud.replaceChildren(document.createTextNode(`连续吞噬 ×${combo.count}`),
+        Object.assign(document.createElement("span"), { textContent: `${combo.remaining.toFixed(1)}s` }));
+    }
   }
 
   modeTitle(snapshot) {

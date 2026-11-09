@@ -9,7 +9,7 @@ import { BackgroundMusic } from "./audio/music.js";
 import { SoundEffects } from "./audio/effects.js";
 import { VisualFeedback } from "./presentation/feedback.js";
 import { RemoteSession } from "./network/remote-session.js";
-import { LobbyUI } from "./network/lobby-ui.js?v=0200";
+import { LobbyUI } from "./network/lobby-ui.js?v=0210";
 import { TacticsUI } from './presentation/tactics-ui.js';
 import { HistoryService } from './services/history.js';
 import { HistoryUI } from './presentation/history-ui.js';
