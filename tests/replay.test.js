@@ -54,6 +54,36 @@ test("同一时间的最终帧会刷新状态并合并事件", () => {
   assert.deepEqual(result.frames.at(-1).events.map(event => event.type), ["split", "gameover"]);
 });
 
+test("联机录像保存服务器快照来源，新回合不会继承上一局时间轴", () => {
+  let sequence = 0;
+  const replay = new ReplayRecorder({
+    sampleSeconds: 0.1, keyframeSeconds: 5, now: () => 1_700_000_000_000,
+    idFactory: () => `server-${++sequence}`,
+  });
+  replay.start(snapshot(0), {
+    source: "server", roomId: "123456", title: "联机 · 生存乱斗",
+  });
+  replay.capture(snapshot(0.1));
+  const first = replay.finish(snapshot(0.2, { state: "gameover" }));
+
+  const nextSnapshot = snapshot(0);
+  nextSnapshot.player.x = 500;
+  nextSnapshot.playerCells[0].x = 500;
+  replay.start(nextSnapshot, {
+    source: "server", roomId: "123456", title: "联机 · 生存乱斗",
+  });
+  replay.capture(snapshot(0.1));
+  const second = replay.finish(snapshot(0.2, { state: "gameover" }));
+
+  assert.notEqual(first.id, second.id);
+  assert.equal(first.source, "server");
+  assert.equal(first.roomId, "123456");
+  assert.equal(first.frames.length, 3);
+  assert.equal(second.frames.length, 3);
+  assert.equal(second.frames[0].snapshot.player.x, 500);
+  assert.equal(second.frames[0].at, 0);
+});
+
 test("食物关键帧加增量可以恢复增加、移除和换位", () => {
   const replay = recorder();
   replay.start(snapshot(0, { foods: [
