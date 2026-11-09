@@ -1,0 +1,28 @@
+<!-- 诊断只读现有帧指标和会话快照；错误保留在页面内，最多 20 条。 -->
+<dialog id="diagnostics-dialog" class="visual-dialog diagnostics-dialog" aria-labelledby="diagnostics-title">
+  <div class="visual-heading">
+    <div><span class="eyebrow">RUNTIME DIAGNOSTICS</span><h2 id="diagnostics-title">运行诊断</h2></div>
+    <button id="diagnostics-close" class="room-button" type="button" autofocus>关闭</button>
+  </div>
+  <p id="diag-connection" class="visual-runtime-status">local · 本地</p>
+  <dl class="diagnostics-grid">
+    <div><dt>FPS</dt><dd id="diag-fps">—</dd></div>
+    <div><dt>模拟耗时</dt><dd id="diag-simulation">—</dd></div>
+    <div><dt>碰撞耗时</dt><dd id="diag-collision">—</dd></div>
+    <div><dt>绘制 P95</dt><dd id="diag-draw-p95">—</dd></div>
+    <div><dt>网络 RTT</dt><dd id="diag-rtt">—</dd></div>
+    <div><dt>网络抖动</dt><dd id="diag-jitter">—</dd></div>
+    <div><dt>插值缓冲</dt><dd id="diag-interpolation">—</dd></div>
+    <div><dt>快照年龄</dt><dd id="diag-state-age">—</dd></div>
+    <div><dt>球体数</dt><dd id="diag-cells">—</dd></div>
+    <div><dt>AI 数</dt><dd id="diag-ai">—</dd></div>
+    <div><dt>存活数</dt><dd id="diag-alive">—</dd></div>
+  </dl>
+  <section class="diagnostics-errors" aria-labelledby="diagnostics-errors-title">
+    <div class="diagnostics-errors-heading">
+      <div><h3 id="diagnostics-errors-title">最近错误</h3><p id="diagnostics-error-status">脚本异常与未处理 Promise 拒绝会显示在这里。</p></div>
+      <button id="diagnostics-clear" class="text-button" type="button">清空</button>
+    </div>
+    <ol id="diagnostics-error-list" class="diagnostics-error-list"></ol>
+  </section>
+</dialog>

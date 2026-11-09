@@ -16,6 +16,14 @@ def index():
     return render_template("index.html")
 
 
+@bp.get("/api/health")
+def health():
+    """轻量存活检查；不读取数据库，也不暴露运行环境或房间状态。"""
+    response = jsonify(status="ok")
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @bp.get("/api/network-info")
 def network_info():
     port = urlsplit(request.host_url).port

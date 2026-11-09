@@ -21,16 +21,23 @@ import { mapFromLocation } from "./maps/map-schema.js";
 import { ReplayRecorder } from "./replay/recorder.js";
 import { ReplayStorage } from "./replay/storage.js";
 import { ReplayUI } from "./presentation/replay-ui.js";
+import { ControlSettings } from "./settings/controls.js";
+import { SettingsUI } from "./settings/settings-ui.js";
+import { ErrorMonitor } from "./debug/error-monitor.js";
+import { DiagnosticsUI } from "./debug/diagnostics-ui.js";
 
 const canvas = document.getElementById("game-canvas");
 const visualCanvas = document.getElementById("game-visual");
-const ui = new GameUI();
+let browserStorage = null;
+try { browserStorage = window.localStorage; } catch { /* 无存储权限仍可使用本次页面设置。 */ }
+const controlSettings = new ControlSettings(browserStorage);
+const ui = new GameUI({ controls: controlSettings });
 const localSession = new LocalSession();
 let session = localSession;
 let remoteSession = null;
 const camera = new Camera();
 const renderer = new Renderer(canvas, camera, visualCanvas);
-const input = new InputController(canvas, document.getElementById("touch-joystick"));
+const input = new InputController(canvas, document.getElementById("touch-joystick"), controlSettings);
 const scores = new ScoreService(record => ui.renderRecord(record));
 const music = new BackgroundMusic(state => ui.renderMusic(state));
 const effects = new SoundEffects(() => music.context, state => ui.renderEffects(state), { supported: music.supported });
@@ -97,7 +104,14 @@ const maps = new MapsUI(mapStore, {
   },
 });
 const lobby = new LobbyUI(() => remoteSession, mapStore);
-const tactics = new TacticsUI({ getSession: () => session, canvas, camera, renderer, toast: message => ui.toast(message) });
+const tactics = new TacticsUI({
+  getSession: () => session,
+  canvas,
+  camera,
+  renderer,
+  toast: message => ui.toast(message),
+  controls: controlSettings,
+});
 const history = new HistoryService(() => historyUI.render());
 const historyUI = new HistoryUI(history, {
   onOpen: () => {
@@ -151,6 +165,34 @@ renderer.visualSettings.subscribe(() => {
 visualSettingsUI.setRuntimeStatus(renderer.getVisualStatus());
 // 麦克风授权只在本次页面里由用户主动开启，刷新后不会自动获取权限。
 if (renderer.visualSettings.values.microphone) renderer.visualSettings.update({ microphone: false });
+const settingsUI = new SettingsUI(controlSettings, {
+  onOpen: () => {
+    input.reset();
+    if (session instanceof RemoteSession) session.stop();
+    else if (session.state === "playing") togglePause();
+  },
+  onClose: () => {
+    input.reset();
+    remoteSession?.resumeInput();
+    canvas.focus({ preventScroll: true });
+  },
+});
+const errorMonitor = new ErrorMonitor(window);
+const diagnosticsUI = new DiagnosticsUI({
+  getSession: () => session,
+  renderer,
+  errorMonitor,
+  onOpen: () => {
+    input.reset();
+    if (session instanceof RemoteSession) session.stop();
+    else if (session.state === "playing") togglePause();
+  },
+  onClose: () => {
+    input.reset();
+    remoteSession?.resumeInput();
+    canvas.focus({ preventScroll: true });
+  },
+});
 input.onSkillAttempt = kind => tactics.skillAttempt(kind);
 input.onArenaPointer = event => tactics.pointer(event);
 renderer.theme = ui.theme;
@@ -181,6 +223,7 @@ function renderHud(snapshot = session.getSnapshot()) {
   ui.render(snapshot, feedback.update(snapshot));
   lobby.render(snapshot);
   tactics.render(snapshot);
+  diagnosticsUI.render(snapshot);
   renderer.labelObstacles = ui.getLabelObstacles(canvas.getBoundingClientRect());
 }
 
@@ -439,6 +482,7 @@ function frame(now) {
     ui.renderQuality(renderer.quality);
     lobby.render(snapshot);
     tactics.render(snapshot);
+    diagnosticsUI.render(snapshot);
     renderer.labelObstacles = ui.getLabelObstacles(canvas.getBoundingClientRect());
     lastHudUpdate = now;
   }
@@ -468,6 +512,9 @@ window.addEventListener("pagehide", () => {
   effects.setGameState("paused");
   visualAudio.disconnect();
   visualSettingsUI?.dispose();
+  settingsUI.dispose();
+  diagnosticsUI.dispose();
+  errorMonitor.dispose();
   renderer.dispose();
   remoteSession?.close();
 });

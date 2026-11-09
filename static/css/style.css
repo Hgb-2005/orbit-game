@@ -2500,3 +2500,322 @@ html[data-theme="light"] #combo-hud {
     margin-left: 0;
   }
 }
+
+/* 25. v0.25 设置与诊断：沿用视觉设置的对话框，不参与游戏和网络状态。 */
+.settings-dialog {
+  width: min(820px, calc(100vw - 24px));
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr);
+  gap: 14px;
+}
+
+.settings-note {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.settings-note kbd {
+  color: var(--text);
+}
+
+.settings-bindings {
+  display: grid;
+  gap: 7px;
+}
+
+.control-binding-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 6px 7px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.control-binding-label {
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.control-binding-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.control-key-button {
+  min-width: 72px;
+  min-height: 30px;
+  padding: 5px 10px;
+  color: var(--text);
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 10px Consolas, monospace;
+}
+
+.control-key-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.control-key-button[data-capturing="true"] {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: control-capture-pulse 1s ease-in-out infinite alternate;
+}
+
+.settings-touch-preview {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  margin: 16px auto;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--accent) 16%, transparent) 0 2px, transparent 3px),
+    color-mix(in srgb, var(--surface) 80%, var(--canvas));
+}
+
+.settings-touch-preview::before,
+.settings-touch-preview::after {
+  position: absolute;
+  content: "";
+  background: var(--border);
+  opacity: .55;
+}
+
+.settings-touch-preview::before {
+  top: 50%;
+  left: 12px;
+  right: 12px;
+  height: 1px;
+}
+
+.settings-touch-preview::after {
+  top: 12px;
+  bottom: 12px;
+  left: 50%;
+  width: 1px;
+}
+
+.settings-touch-preview span {
+  position: absolute;
+  inset: 50%;
+  width: 34px;
+  height: 34px;
+  margin: -17px;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.settings-touch-preview i {
+  position: absolute;
+  top: 37px;
+  left: 66px;
+  width: 31px;
+  height: 1px;
+  background: var(--accent);
+  transform: rotate(-28deg);
+  transform-origin: left center;
+}
+
+.settings-touch-preview i::after {
+  position: absolute;
+  top: -3px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  content: "";
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.diagnostics-dialog {
+  width: min(760px, calc(100vw - 24px));
+}
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.diagnostics-grid div {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--canvas);
+}
+
+.diagnostics-grid dt {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: .4px;
+}
+
+.diagnostics-grid dd {
+  margin: 6px 0 0;
+  color: var(--text);
+  font: 13px Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-errors {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--canvas);
+}
+
+.diagnostics-errors-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diagnostics-errors-heading h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.diagnostics-errors-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.diagnostics-error-list {
+  display: grid;
+  gap: 7px;
+  max-height: 260px;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.diagnostics-error-list li {
+  min-width: 0;
+  padding: 9px 10px;
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, #df9189 35%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, #df9189 5%, var(--surface));
+  font-size: 10px;
+}
+
+.diagnostics-error-list li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diagnostics-error-list strong,
+.diagnostics-error-list time {
+  color: var(--muted);
+  font: 9px Consolas, monospace;
+}
+
+.diagnostics-error-list p {
+  margin: 6px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-error-list details {
+  margin-top: 7px;
+}
+
+.diagnostics-error-list summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.diagnostics-error-list pre {
+  max-height: 150px;
+  margin: 7px 0 0;
+  overflow: auto;
+  color: var(--muted);
+  font: 9px/1.55 Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.diagnostics-error-list .diagnostics-empty {
+  color: var(--muted);
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.diagnostics-error-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  margin-left: 3px;
+  padding: 0 4px;
+  color: var(--accent-ink);
+  background: var(--gold);
+  border-radius: 999px;
+  font: 9px/1 Consolas, monospace;
+}
+
+@keyframes control-capture-pulse {
+  from { filter: brightness(.92); }
+  to { filter: brightness(1.12); }
+}
+
+@media (max-width: 760px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .control-binding-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .diagnostics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .control-key-button {
+    min-width: 58px;
+    padding-inline: 7px;
+  }
+
+  .diagnostics-errors-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .diagnostics-errors-heading .text-button {
+    align-self: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .control-key-button[data-capturing="true"] {
+    animation: none;
+  }
+}

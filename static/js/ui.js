@@ -5,6 +5,7 @@ import { PRACTICE_DRILLS } from "./core/practice.js";
 import { recapItems } from "./presentation/recap.js";
 import { bindHoldButton } from "./hold-button.js";
 import { telemetryView } from './presentation/match-recap.js';
+import { formatKeyLabel } from "./settings/controls.js";
 
 export function formatTime(seconds) {
   const total = Math.floor(seconds);
@@ -17,7 +18,8 @@ const $ = id => document.getElementById(id);
 
 /** DOM 显示与 Canvas 绘制分开，更新 HUD 不会触碰游戏规则。 */
 export class GameUI {
-  constructor() {
+  constructor({ controls = null } = {}) {
+    this.controls = controls;
     this.lastState = "";
     this.isNewRecord = false;
     this.toastTimer = null;
@@ -368,7 +370,8 @@ export class GameUI {
     const largestMass = snapshot.player.largestMass ?? snapshot.player.mass;
     const smallestMass = snapshot.player.smallestMass ?? snapshot.player.mass;
     $("cell-quality").textContent = split.count > 1 ? `最大 ${number(largestMass)} · 最小 ${number(smallestMass)}` : `当前 ${number(largestMass)}`;
-    $("merge-status").textContent = split.count < 2 ? "长大后右键 / Q / W 分身" : split.merging ? "正在靠拢合体" : `${split.mergeRemaining.toFixed(1)}s 后可合体`;
+    const splitHint = this.controls?.keysFor("split").map(formatKeyLabel).join(" / ") || "右键 / Q / W";
+    $("merge-status").textContent = split.count < 2 ? `长大后${splitHint} 分身` : split.merging ? "正在靠拢合体" : `${split.mergeRemaining.toFixed(1)}s 后可合体`;
     $("protection-hint").hidden = snapshot.state !== "playing" || snapshot.spectating || snapshot.protectionRemaining <= 0;
     $("protection-seconds").textContent = Math.ceil(snapshot.protectionRemaining);
     this.renderItemHud(snapshot);

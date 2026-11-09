@@ -1,16 +1,24 @@
-/** 摇杆只产生方向输入；单机与联机共用，与鼠标技能按钮可以多指同时操作。 */
-export function joystickVector(dx, dy, radius = 40) {
+import { normalizeTouchSettings } from "./settings/controls.js";
+
+/**
+ * 摇杆只产生方向输入；单机与联机共用，与鼠标技能按钮可以多指同时操作。
+ * 默认死区 6px、灵敏度 100%，与阶段 5 的固定手感完全一致。
+ */
+export function joystickVector(dx, dy, radius = 40, options = {}) {
+  const settings = normalizeTouchSettings(options);
   const distance = Math.hypot(dx, dy);
-  if (distance < 6) return { x: 0, y: 0 };
-  const strength = Math.min(1, (distance - 6) / (radius - 6));
+  if (distance < settings.deadZone) return { x: 0, y: 0 };
+  const travel = Math.max(1, radius - settings.deadZone);
+  const strength = Math.min(1, (distance - settings.deadZone) / travel * settings.sensitivity / 100);
   return { x: dx / distance * strength, y: dy / distance * strength };
 }
 
 export class TouchJoystick {
-  constructor(element, onMove = () => {}) {
+  constructor(element, onMove = () => {}, settings = {}) {
     this.element = element;
     this.thumb = element.querySelector(".joystick-thumb");
     this.onMove = onMove;
+    this.settings = normalizeTouchSettings(settings);
     this.pointerId = null;
     this.vector = { x: 0, y: 0 };
     element.addEventListener("pointerdown", event => {
@@ -30,10 +38,14 @@ export class TouchJoystick {
 
   get active() { return this.pointerId !== null; }
 
+  setSettings(settings) {
+    this.settings = normalizeTouchSettings({ ...this.settings, ...settings });
+  }
+
   move(event) {
     const rect = this.element.getBoundingClientRect();
     const dx = event.clientX - rect.left - rect.width / 2, dy = event.clientY - rect.top - rect.height / 2;
-    this.vector = joystickVector(dx, dy);
+    this.vector = joystickVector(dx, dy, Math.min(40, Math.min(rect.width, rect.height) / 2), this.settings);
     const scale = Math.min(1, 32 / (Math.hypot(dx, dy) || 1));
     this.thumb.style.transform = `translate(${dx * scale}px, ${dy * scale}px)`;
     this.element.dataset.active = "true";

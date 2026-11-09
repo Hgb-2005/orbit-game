@@ -1,11 +1,12 @@
 import { abilityReason, SIGNAL_NAMES } from './tactics.js';
+import { formatKeyLabel } from '../settings/controls.js';
 
 const $ = id => document.getElementById(id);
 
 /** 战术操作、观战与辅助设置独立于规则；所有标点仍需服务器确认。 */
 export class TacticsUI {
-  constructor({ getSession, canvas, camera, renderer, toast }) {
-    Object.assign(this, { getSession, canvas, camera, renderer, toast });
+  constructor({ getSession, canvas, camera, renderer, toast, controls = null }) {
+    Object.assign(this, { getSession, canvas, camera, renderer, toast, controls });
     this.pingKind = null; this.roundId = ''; this.seen = new Set(); this.lastSkillNote = -Infinity;
     this.spectatorSignature = ''; this.lastMetricAt = 0;
     for (const [id, key, fallback] of [['split-preview', 'orbit.splitPreview', false], ['performance-toggle', 'orbit.performance', false]]) {
@@ -86,8 +87,11 @@ export class TacticsUI {
       $(`signal-${kind}`).setAttribute('aria-pressed', String(this.pingKind === kind));
     }
     $('signal-cancel').hidden = !this.pingKind;
+    const signalKeys = ['signalGather', 'signalHelp', 'signalDanger'].map(action =>
+      this.controls?.keysFor(action).map(formatKeyLabel).join(' / ')).filter(Boolean);
+    const signalHint = signalKeys.length === 3 ? `按 ${signalKeys.join(' / ')} 选标点` : '使用标点快捷键';
     $('signal-status').textContent = this.pingKind ? `${SIGNAL_NAMES[this.pingKind]}：点击画面或小地图，Esc 取消` :
-      snapshot.pingCooldown > 0 ? `标点冷却 ${snapshot.pingCooldown.toFixed(1)}s` : '按 1 / 2 / 3 选标点，再点击位置';
+      snapshot.pingCooldown > 0 ? `标点冷却 ${snapshot.pingCooldown.toFixed(1)}s` : `${signalHint}，再点击位置`;
     for (const ping of snapshot.pings || []) {
       if (!this.seen.has(ping.id) && ping.ownerId !== snapshot.network?.playerId) this.toast(`${ping.name}：${SIGNAL_NAMES[ping.kind]}`);
       this.seen.add(ping.id);
@@ -125,7 +129,9 @@ export class TacticsUI {
     }
     for (const kind of ['split', 'spore']) {
       const reason = abilityReason(snapshot, kind);
-      $(`${kind}-hint`).textContent = reason || (kind === 'split' ? '右键 / Q / W · 分裂不扣分' : '长按连吐 · 喂刺 5 颗反击');
+      const keys = this.controls?.keysFor(kind).map(formatKeyLabel).join(' / ');
+      $(`${kind}-hint`).textContent = reason || (kind === 'split' ? `右键 / ${keys} · 分裂不扣分` :
+        `左键长按 / ${keys} · 喂刺 5 颗反击`);
     }
     const showMetrics = $('performance-toggle').checked;
     $('performance-status').hidden = !showMetrics;

@@ -1,9 +1,12 @@
 import { TouchJoystick } from "./touch-joystick.js";
+import { ControlSettings, normalizeKeyboardKey } from "./settings/controls.js";
 
 /** 输入统一转换成 [-1, 1] 的方向向量，与网络和物理更新无关。 */
 export class InputController {
-  constructor(canvas, joystickElement = null) {
+  constructor(canvas, joystickElement = null, controlSettings = null) {
     this.canvas = canvas;
+    this.controlSettings = controlSettings || new ControlSettings(null);
+    this.bindings = this.controlSettings.snapshot.bindings;
     this.pointer = null;
     this.keys = new Set();
     this.mode = "pointer";
@@ -15,9 +18,17 @@ export class InputController {
     this.onCommand = () => {};
     this.onSkillAttempt = () => {};
     this.onArenaPointer = () => false;
-    this.joystick = joystickElement ? new TouchJoystick(joystickElement, () => {
-      this.mode = "joystick"; this.pointer = null;
-    }) : null;
+    this.joystick = joystickElement ? new TouchJoystick(
+      joystickElement,
+      () => { this.mode = "joystick"; this.pointer = null; },
+      this.controlSettings.snapshot.touch,
+    ) : null;
+    this.settingsUnsubscribe = this.controlSettings.subscribe(snapshot => {
+      this.bindings = snapshot.bindings;
+      this.joystick?.setSettings(snapshot.touch);
+      // 修改映射时清掉正在按住的旧键，避免技能在面板关闭后意外续发。
+      this.reset();
+    });
 
     canvas.addEventListener("pointermove", event => {
       if (this.joystick?.active) return;
@@ -56,42 +67,46 @@ export class InputController {
       });
     }
     canvas.addEventListener("lostpointercapture", event => this.sporePointers.delete(event.pointerId));
-    // W 是分身快捷键，只用方向键或 A/S/D 控制移动，避免误触改写移动方向。
-    const movementKeys = ["arrowup", "arrowdown", "arrowleft", "arrowright", "a", "s", "d"];
+    // 移动键位固定，不开放自定义。默认 W 同时是分身键，符合旧版操作习惯。
+    const movementKeys = ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"];
     window.addEventListener("keydown", event => {
-      if (event.target.closest?.('dialog[open]')) return;
-      if (event.ctrlKey || event.altKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
-      const key = event.key.toLowerCase();
+      if (event.target?.closest?.('dialog[open]')) return;
+      if (event.ctrlKey || event.altKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || "")) return;
+      const key = normalizeKeyboardKey(event.key);
+      const action = this.controlSettings.actionForKey(key);
       if (movementKeys.includes(key)) {
         event.preventDefault();
         this.keys.add(key);
         this.mode = "keyboard";
       }
-      if (key === "e") {
+      if (action === "spore") {
         event.preventDefault();
-        this.keys.add("e");
+        this.keys.add(key);
         if (!event.repeat) this.requestSpore();
       }
-      if (key === "q" || key === "w") {
+      if (action === "split") {
         event.preventDefault();
         this.keys.add(key);
         if (!event.repeat) this.requestSplit();
       }
-      if (key === "c") { event.preventDefault(); this.keys.add("c"); }
+      if (action === "regroup") { event.preventDefault(); this.keys.add(key); }
       if (event.repeat) return;
-      if (['1', '2', '3'].includes(key)) this.onCommand(`signal:${['gather', 'help', 'danger'][Number(key) - 1]}`);
-      // 按钮保留空格键原生行为，避免点击后又被全局快捷键暂停。
-      if ((key === " " || key === "escape") && !["BUTTON", "SUMMARY"].includes(event.target.tagName)) {
+      if (["signalGather", "signalHelp", "signalDanger"].includes(action)) {
         event.preventDefault();
-        this.onCommand(key === 'escape' ? 'escape' : 'pause');
+        this.onCommand(`signal:${action.slice(6).toLowerCase()}`);
       }
-      if (key === "r") this.onCommand("restart");
-      if (key === "f") {
+      // 按钮保留空格键原生行为，避免点击后又被全局快捷键暂停。
+      if ((action === "pause" || key === "escape") && !["BUTTON", "SUMMARY"].includes(event.target?.tagName)) {
+        event.preventDefault();
+        this.onCommand(key === "escape" ? "escape" : "pause");
+      }
+      if (action === "restart") this.onCommand("restart");
+      if (action === "focus") {
         event.preventDefault();
         this.onCommand("focus");
       }
     });
-    window.addEventListener("keyup", event => this.keys.delete(event.key.toLowerCase()));
+    window.addEventListener("keyup", event => this.keys.delete(normalizeKeyboardKey(event.key)));
     window.addEventListener("blur", () => this.reset());
   }
 
@@ -125,12 +140,13 @@ export class InputController {
 
   getInput(screenPosition, view) {
     const aim = this.getAim(screenPosition, view);
-    const split = this.keys.has("q") || this.keys.has("w") || this.splitQueued;
+    const hasAction = action => (this.bindings[action] || []).some(key => this.keys.has(key));
+    const split = hasAction("split") || this.splitQueued;
     const spore = this.sporeQueued;
-    const sporeHeld = this.buttonSporeHeld || this.sporePointers.size > 0 || this.keys.has("e");
+    const sporeHeld = this.buttonSporeHeld || this.sporePointers.size > 0 || hasAction("spore");
     this.sporeQueued = false;
     this.splitQueued = false;
-    const regroup = this.buttonRegroupHeld || this.keys.has("c");
+    const regroup = this.buttonRegroupHeld || hasAction("regroup");
     const pan = this.mode === 'keyboard' || this.mode === 'joystick' ? aim : { x: 0, y: 0 };
     return { ...aim, sprint: false, split, spore, sporeHeld, regroup, view, panX: pan.x, panY: pan.y };
   }
@@ -153,7 +169,8 @@ export class InputController {
     if (this.mode === "joystick") return { x: 0, y: 0 };
     if (this.mode === "keyboard") {
       const x = Number(this.keys.has("d") || this.keys.has("arrowright")) - Number(this.keys.has("a") || this.keys.has("arrowleft"));
-      const y = Number(this.keys.has("s") || this.keys.has("arrowdown")) - Number(this.keys.has("arrowup"));
+      const y = Number(this.keys.has("s") || this.keys.has("arrowdown"))
+        - Number(this.keys.has("w") || this.keys.has("arrowup"));
       const length = Math.hypot(x, y) || 1;
       return { x: x / length, y: y / length };
     }

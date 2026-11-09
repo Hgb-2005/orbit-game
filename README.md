@@ -2,6 +2,17 @@
 
 一个使用 Flask、原生 JavaScript ES Modules、Canvas 2D、WebGL 和 SQLite 的吞噬小游戏，支持单机与局域网真人 + 人机联机。无图片素材、无前端打包步骤、无 npm 运行时依赖。
 
+## v0.25.0：阶段 6 · 设置、诊断与发布校验
+
+- **可自定义操作**：新增“按键与设置”面板，可分别重设分身、吐孢子、聚拢、暂停、专注、重开和三种联机标点的键位。按键冲突、方向键、Esc、Tab、修饰键和组合键会被拒绝；设置保存在当前浏览器，返回游戏后立即生效。鼠标左右键、固定 WASD / 方向键移动和手机技能按钮保持原有操作。
+- **触屏手感**：摇杆死区可在 **2～20 px** 调整，灵敏度可在 **50%～150%** 调整；默认仍为旧版的 **6 px / 100%**。设置只改变输入层，不修改质量、速度、碰撞或服务器权威规则。
+- **运行诊断**：单机与联机共用诊断面板，按现有 10 Hz HUD 节拍显示 FPS、模拟与碰撞耗时、绘制 P95、RTT、网络抖动、插值缓冲、快照年龄、球体数、AI 数和存活数。面板读取现有指标，不另建高频采样器。
+- **错误捕获**：脚本异常和未处理 Promise 拒绝会进入页面内最多 **20 条**的有界错误记录，可展开堆栈并清空。诊断信息不上传，也不改变最高分或房间数据。
+- **发布校验**：新增 `GET /api/health` 轻量存活接口和 GitHub Actions CI；CI 在 Ubuntu、Python 3.12、Node.js 20 上分别运行全部后端与 JavaScript 测试。
+- **部署边界**：`/api/health` 使用 `Cache-Control: no-store`。联机、SQLite 和 WebSocket 必须由持续运行的 Flask 服务承载；GitHub Pages 只能提供静态文件，不能作为联机版运行环境。
+
+阶段 6 已完成。完整回归包含 **228 项 JavaScript 测试**和 **130 项 Python 测试**，页面显示 **V0.25.0**。更新后重启 `app.py` 或 `start-lan.bat`，旧标签页按 **Ctrl+F5**。
+
 ## v0.24.0：阶段 5 · 权威联机与断线恢复
 
 - **服务端权威联机**：继续使用本项目稳定的 Flask + `flask_sock` 架构。房间支持 6 位数字码、1～4 名真人、空位人机补满；移动、吞噬、生命、复活、分数、排名、道具、缩圈、地图碰撞和胜负都由 Python 服务器以 **30 Hz** 固定步长计算，浏览器只提交输入并绘制 **20 Hz** 最新权威快照。
@@ -312,6 +323,10 @@ python3 -m venv .venv
 
 端口被占用时，在 PowerShell 设置 `$env:PORT = "5001"` 后再启动，并访问相应端口。`app.py` 是本地开发入口；公开部署时应另行配置生产 WSGI 服务。
 
+服务启动后可访问 **http://127.0.0.1:5000/api/health**。正常响应为 `{"status":"ok"}`，用于本地或部署探针检查 Flask 是否仍在运行；它不检查房间、WebSocket 或数据库内容。
+
+公开部署时请保持 Flask + `flask_sock` 服务持续运行，并持久化 `instance/game.sqlite3`。GitHub Pages 只能托管静态 HTML/CSS/JS，无法运行 WebSocket、HTTP API 或 SQLite，因此不能直接部署本项目的联机版。
+
 ## 怎么玩
 
 - 点击“开始游戏”，小球会朝鼠标方向移动；鼠标越靠近球心，速度越慢。也支持方向键、WASD、触屏拖动及左侧虚拟摇杆，右侧技能可同时操作。
@@ -378,12 +393,19 @@ static/
     services/scores.js          记录 API、暂存、断线重试
     ui.js                       页面 HUD、结算、主题切换
     main.js                     模块装配、固定步长游戏循环
+    settings/controls.js        按键映射、持久化、冲突校验和触控参数
+    settings/settings-ui.js     按键捕获与触屏设置面板
+    debug/error-monitor.js      页面内全局错误与 Promise 拒绝捕获
+    debug/diagnostics-ui.js     帧耗时、网络质量与错误诊断面板
 instance/game.sqlite3           首次启动自动生成，已忽略提交
 tests/                          后端和游戏规则测试
 tools/benchmark_multiplayer.py  对比本地 Git 基线的模拟耗时与消息体积
+.github/workflows/ci.yml        GitHub Actions 全量回归
 ```
 
 ## 分数 API 与数据库
+
+`GET /api/health` 返回 `{"status":"ok"}` 和 `Cache-Control: no-store`，只表示 Flask 进程可响应 HTTP。
 
 `GET /api/high-score`：
 

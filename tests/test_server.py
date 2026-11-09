@@ -22,6 +22,12 @@ class ScoreAPITests(unittest.TestCase):
         self.assertEqual(self.client.get("/").status_code, 200)
         self.assertEqual(self.client.get("/api/high-score").json["high_score"], 0)
 
+    def test_health_check_is_lightweight_and_not_cached(self):
+        response = self.client.get("/api/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"status": "ok"})
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
     def test_record_only_increases_and_persists(self):
         first = self.client.post("/api/scores", json={"score": 120}).json
         self.assertTrue(first["is_new_record"])

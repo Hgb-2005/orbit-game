@@ -9,8 +9,8 @@
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0240">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0240">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0250">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0250">
     </script>
   </head>
   <body>
@@ -235,28 +235,28 @@
               <div id="ability-panel" class="ability-panel" hidden>
                 <div class="ability-card">
                   <button id="split-button" class="sprint-button" type="button" title="朝移动方向分身：单球质量至少 72，最多 8 个分身，10 秒后靠拢自动合体；也可按 Q 或 W。" data-state="low">
-                    <span class="ability-main"><span class="ability-symbol" aria-hidden="true">◉</span><span id="split-label">质量不足</span><kbd>右键 / Q / W</kbd></span>
+                    <span class="ability-main"><span class="ability-symbol" aria-hidden="true">◉</span><span id="split-label">质量不足</span><kbd id="split-key-hint" data-control-hint="split">右键 / Q / W</kbd></span>
                     <span class="sprint-track"><span id="split-progress"></span></span>
                   </button>
                   <span id="split-hint" class="ability-hint">单球 ≥ 72 · 分裂不扣分</span>
                 </div>
                 <div class="ability-card">
                   <button id="spore-button" class="sprint-button" type="button" title="长按左键 / E / 此按钮连续吐孢子：单球至少 48 m，每颗消耗 8 m，间隔 0.45 秒；喂固定绿色刺球 5 颗可发射反击刺。" data-state="ready">
-                    <span class="ability-main"><span class="ability-symbol" aria-hidden="true">✦</span><span id="spore-label">吐孢子就绪</span><kbd>左键 / E</kbd></span>
+                    <span class="ability-main"><span class="ability-symbol" aria-hidden="true">✦</span><span id="spore-label">吐孢子就绪</span><kbd id="spore-key-hint" data-control-hint="spore">左键长按 / E</kbd></span>
                     <span class="sprint-track"><span id="spore-progress"></span></span>
                   </button>
                   <span id="spore-hint" class="ability-hint">长按连吐 · 喂刺 5 颗发射反击</span>
                 </div>
                 <button id="regroup-button" class="regroup-button" type="button" aria-pressed="false" title="按住 C 或此按钮向球群中心聚拢；合体仍需等待 10 秒冷却。" disabled>
-                  <span id="regroup-label">按住聚拢</span><span>保留合体冷却</span><kbd>C</kbd>
+                  <span id="regroup-label">按住聚拢</span><span>保留合体冷却</span><kbd id="regroup-key-hint" data-control-hint="regroup">按住 C</kbd>
                 </button>
-                <div class="cell-status"><strong id="cell-count">1 / 8 分身</strong><span class="group-mass">总质量 <b id="group-mass">36</b></span><span id="cell-quality">最大 36 · 最小 36</span><span id="merge-status">长大后右键 / Q / W 分身</span></div>
+                <div class="cell-status"><strong id="cell-count">1 / 8 分身</strong><span class="group-mass">总质量 <b id="group-mass">36</b></span><span id="cell-quality">最大 36 · 最小 36</span><span id="merge-status">长大后 <b id="merge-control-hint">右键 / Q / W</b> 分身</span></div>
               </div>
               <div id="item-effect-hud" aria-label="当前地图道具效果" hidden></div>
               <div id="combo-hud" aria-live="polite" hidden></div>
               <div id="game-overlay" class="game-overlay">
                 <div class="overlay-card">
-                  <div class="release-badge">V0.24.0 <span>阶段 5 · 权威联机与断线恢复</span></div>
+                  <div class="release-badge">V0.25.0 <span>阶段 6 · 设置、诊断与发布校验</span></div>
                   <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
                     <span>
                     </span>
@@ -418,9 +418,11 @@
             </div>
             <div class="assist-settings">
               <button id="maps-open" class="text-button" type="button">地图工坊</button>
+              <button id="settings-open" class="text-button" type="button">按键与设置</button>
               <button id="visual-open" class="text-button" type="button">视觉设置</button>
               <button id="history-open" class="text-button" type="button">对局记录</button>
               <button id="replays-open" class="text-button" type="button">对局回放</button>
+              <button id="diagnostics-open" class="text-button" type="button">运行诊断 <span id="diagnostics-error-count" class="diagnostics-error-count" hidden>0</span></button>
               <label><input id="split-preview" type="checkbox"> 分裂方向预览</label>
               <label><input id="performance-toggle" type="checkbox"> 显示性能</label>
               <output id="performance-status" hidden></output>
@@ -573,18 +575,18 @@
                 </p>
               </div>
               <div class="keyboard-tips">
-                <span><kbd>右键 / Q / W</kbd> 分身 · 10s 后合体</span>
-                <span><kbd>按住 C</kbd> 聚拢分身 · 松开恢复移动</span>
-                <span><kbd>长按左键 / E</kbd> 连吐孢子 · 喂刺 5 颗发射反击</span>
-                <span><kbd>F</kbd> 专注</span>
+                <span><kbd data-control-hint="split">右键 / Q / W</kbd> 分身 · 10s 后合体</span>
+                <span><kbd data-control-hint="regroup">按住 C</kbd> 聚拢分身 · 松开恢复移动</span>
+                <span><kbd data-control-hint="spore">长按左键 / E</kbd> 连吐孢子 · 喂刺 5 颗发射反击</span>
+                <span><kbd data-control-hint="focus">F</kbd> 专注</span>
                 <span>
-                  <kbd>
+                  <kbd data-control-hint="pause">
                     Space
                   </kbd>
                   暂停
                 </span>
                 <span>
-                  <kbd>
+                  <kbd data-control-hint="restart">
                     R
                   </kbd>
                   重启
@@ -596,7 +598,9 @@
         </div>
         {% include '_history.html' %}
         {% include '_replays.html' %}
+        {% include '_settings.html' %}
         {% include '_visual-settings.html' %}
+        {% include '_debug.html' %}
         {% include '_maps.html' %}
         <footer class="page-footer">
           <span>
@@ -613,7 +617,7 @@
             <i>
               /
             </i>
-            V.0240
+            V.0250
           </span>
         </footer>
         <noscript>

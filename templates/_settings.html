@@ -1,0 +1,31 @@
+<!-- 本地输入偏好：只改变按键与触控手感，不修改服务端规则或网络快照。 -->
+<dialog id="settings-dialog" class="visual-dialog settings-dialog" aria-labelledby="settings-title">
+  <div class="visual-heading">
+    <div><span class="eyebrow">INPUT & TOUCH</span><h2 id="settings-title">按键与设置</h2></div>
+    <button id="settings-close" class="room-button" type="button" autofocus>关闭</button>
+  </div>
+  <p id="settings-status" class="visual-settings-status" role="status" aria-live="polite">
+    修改会立即保存在本机浏览器；鼠标左右键、移动键和手机技能按钮保持不变。
+  </p>
+
+  <div class="settings-grid">
+    <fieldset>
+      <legend>技能按键</legend>
+      <p class="settings-note">移动固定为 <kbd>W A S D</kbd> 与方向键。点击按键后按新键；重复或冲突的按键会被拒绝。</p>
+      <div id="settings-bindings" class="settings-bindings"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>触屏摇杆</legend>
+      <label>摇杆死区<input id="settings-dead-zone" type="range" min="2" max="20" step="1"><output id="settings-dead-zone-value">6 px</output></label>
+      <label>触控灵敏度<input id="settings-touch-sensitivity" type="range" min="50" max="150" step="5"><output id="settings-touch-sensitivity-value">100%</output></label>
+      <p class="settings-note">死区越大，拇指轻微移动越不会带动球；灵敏度越高，越少位移即可达到全速。默认值保持旧版手感。</p>
+      <div class="settings-touch-preview" aria-hidden="true">
+        <span></span><i></i>
+      </div>
+      <div class="visual-actions">
+        <button id="settings-reset" class="text-button" type="button">恢复默认设置</button>
+      </div>
+    </fieldset>
+  </div>
+</dialog>
