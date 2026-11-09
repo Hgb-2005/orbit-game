@@ -1,0 +1,66 @@
+{# 回放只保存在当前浏览器，不会上传到 Flask，也不会读取或修改实时对局状态。 #}
+<dialog id="replay-dialog" class="replay-dialog" aria-labelledby="replay-title">
+  <div class="replay-shell">
+    <header class="replay-header">
+      <div>
+        <p class="eyebrow">LOCAL REPLAY · INDEXEDDB</p>
+        <h2 id="replay-title">对局回放</h2>
+        <p id="replay-storage-note">录像只保存在当前浏览器；完成一局后自动保存，最多保留 10 盘。</p>
+      </div>
+      <button id="replay-close" class="icon-button" type="button" aria-label="关闭对局回放">×</button>
+    </header>
+
+    <div class="replay-layout">
+      <aside class="replay-library" aria-label="录像列表">
+        <div class="replay-library-heading">
+          <strong>最近录像</strong>
+          <button id="replay-refresh" class="text-button" type="button">刷新</button>
+        </div>
+        <p id="replay-list-status" class="replay-note" role="status">正在读取录像…</p>
+        <div id="replay-list" class="replay-list" role="group" aria-label="选择录像"></div>
+      </aside>
+
+      <section class="replay-stage" aria-label="回放画面">
+        <div class="replay-canvas-frame">
+          <canvas id="replay-canvas" aria-label="对局回放画面"></canvas>
+          <div id="replay-empty" class="replay-empty">
+            <strong>还没有可播放的录像</strong>
+            <span>正常完成一局后，这里会自动出现完整回放。</span>
+          </div>
+          <div id="replay-badge" class="replay-badge" hidden></div>
+        </div>
+
+        <div class="replay-meta">
+          <div>
+            <strong id="replay-name">选择一盘录像</strong>
+            <span id="replay-detail">10 Hz 权威采样 · 食物关键帧增量</span>
+          </div>
+          <span id="replay-clock">00:00 / 00:00</span>
+        </div>
+
+        <div class="replay-progress-row">
+          <button id="replay-back" class="room-button" type="button" title="后退 5 秒">−5s</button>
+          <button id="replay-play" class="room-button room-primary" type="button" disabled>播放</button>
+          <button id="replay-forward" class="room-button" type="button" title="前进 5 秒">+5s</button>
+          <input id="replay-progress" type="range" min="0" max="1" value="0" step="0.04" aria-label="回放进度" disabled>
+        </div>
+
+        <div class="replay-tools">
+          <label>倍速
+            <select id="replay-speed" disabled>
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+            </select>
+          </label>
+          <button id="replay-screenshot" class="room-button" type="button" disabled>导出 PNG</button>
+          <button id="replay-video" class="room-button" type="button" disabled>导出 WebM</button>
+          <button id="replay-delete" class="text-button replay-delete" type="button" disabled>删除这盘</button>
+          <span id="replay-action-status" class="replay-note" role="status"></span>
+        </div>
+      </section>
+    </div>
+  </div>
+</dialog>

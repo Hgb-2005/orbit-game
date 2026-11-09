@@ -18,6 +18,9 @@ import { VisualSettingsUI } from "./visual/visual-settings-ui.js";
 import { MapStore } from "./maps/map-store.js";
 import { MapsUI } from "./maps/maps-ui.js";
 import { mapFromLocation } from "./maps/map-schema.js";
+import { ReplayRecorder } from "./replay/recorder.js";
+import { ReplayStorage } from "./replay/storage.js";
+import { ReplayUI } from "./presentation/replay-ui.js";
 
 const canvas = document.getElementById("game-canvas");
 const visualCanvas = document.getElementById("game-visual");
@@ -33,6 +36,8 @@ const music = new BackgroundMusic(state => ui.renderMusic(state));
 const effects = new SoundEffects(() => music.context, state => ui.renderEffects(state), { supported: music.supported });
 const visualAudio = new VisualAudioAnalyser();
 const feedback = new VisualFeedback();
+const replayStorage = new ReplayStorage();
+const replayRecorder = new ReplayRecorder();
 const mapStore = new MapStore();
 const sharedMap = mapFromLocation();
 if (sharedMap) {
@@ -102,6 +107,19 @@ const historyUI = new HistoryUI(history, {
   },
   onClose: () => { input.reset(); remoteSession?.resumeInput(); canvas.focus({ preventScroll: true }); },
 });
+const replays = new ReplayUI(replayStorage, {
+  toast: message => ui.toast(message),
+  onOpen: () => {
+    input.reset();
+    if (session instanceof RemoteSession) session.stop();
+    else if (session.state === "playing") togglePause();
+  },
+  onClose: () => {
+    input.reset();
+    remoteSession?.resumeInput();
+    canvas.focus({ preventScroll: true });
+  },
+});
 let visualSettingsUI = null;
 async function toggleMicrophone(enabled) {
   if (!enabled) {
@@ -166,12 +184,30 @@ function renderHud(snapshot = session.getSnapshot()) {
   renderer.labelObstacles = ui.getLabelObstacles(canvas.getBoundingClientRect());
 }
 
+/**
+ * 回放与实时会话共用同一份游戏快照协议。这里只复制数据并异步持久化，
+ * 不把录制失败传播给模拟循环，因此浏览器存储异常不会中断对局。
+ */
+function finishReplay(snapshot = session.getSnapshot()) {
+  const recording = replayRecorder.finish(snapshot);
+  if (!recording) return;
+  void replayStorage.save(recording)
+    .then(() => replays.refreshIfOpen())
+    .catch(() => ui.toast("本局录像保存失败，游戏仍可继续"));
+}
+
+function captureReplay(snapshot, events = []) {
+  return replayRecorder.capture(snapshot, events);
+}
+
 function start(forceNewGame = false) {
   if (session instanceof RemoteSession) return;
   const isNewRound = session.state !== "paused" || forceNewGame;
   if (session.state === "paused" && !forceNewGame) {
     session.resume();
   } else {
+    // 未结束就重开也保留已经游玩的部分，避免录制状态跨局串线。
+    finishReplay();
     if (session.state !== "ready") syncScore();
     recordAtStart = scores.highScore;
     ui.focusOnStart();
@@ -185,6 +221,10 @@ function start(forceNewGame = false) {
     ui.isNewRecord = false;
     lastObservedScore = -1;
     const snapshot = session.getSnapshot();
+    replayRecorder.start(snapshot, {
+      source: "local",
+      title: `${ui.mode === "survival" ? "生存" : "经典"} · ${mapStore.active()?.name ?? "标准球场"}`,
+    });
     camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
   }
   input.reset();
@@ -232,6 +272,7 @@ function toggleFocus() {
 }
 
 ui.onModeChange = mode => {
+  finishReplay();
   if (mode === "multiplayer") {
     syncScore();
     remoteSession = new RemoteSession(new LocalSession().getSnapshot(), () => {
@@ -252,10 +293,18 @@ ui.onModeChange = mode => {
 
 function handleEvents(events) {
   if (events.some(event => event.type === "networkstart")) {
+    finishReplay();
     recordAtStart = scores.highScore;
     ui.focusOnStart(); renderer.resize(); renderer.resetEffects(); feedback.reset(); ui.resetRound(); input.reset();
     ui.isNewRecord = false; lastObservedScore = -1;
     const snapshot = session.getSnapshot();
+    replayRecorder.start(snapshot, {
+      source: "server",
+      roomId: snapshot.network?.room?.id ?? snapshot.network?.room?.code ?? null,
+      title: `联机 · ${snapshot.network?.room?.rules?.mode === "teams" ? "2v2 团队" :
+        snapshot.network?.room?.rules?.mode === "shrink" ? "缩圈乱斗" : "生存乱斗"}`,
+    });
+    replayRecorder.appendEvents(events);
     camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
     music.setGameState(session.state, { restart: true }); effects.setGameState(session.state, { restart: true });
     unlockAudio();
@@ -348,7 +397,10 @@ function frame(now) {
   if (session instanceof RemoteSession) {
     const snapshot = session.getSnapshot();
     const controls = input.getInput(camera.worldToScreen(snapshot.player), camera.getView());
-    handleEvents(session.step(dt, controls));
+    const events = session.step(dt, controls);
+    handleEvents(events);
+    captureReplay(session.getSnapshot(), events);
+    if (session.state === "gameover") finishReplay();
     accumulator = 0;
   } else if (session.state === "playing") {
     accumulator += dt;
@@ -356,6 +408,7 @@ function frame(now) {
       const controls = input.getInput(camera.worldToScreen(session.getSnapshot().player), camera.getView());
       const events = session.step(CONFIG.simulation.step, controls);
       handleEvents(events);
+      captureReplay(session.getSnapshot(), events);
       accumulator -= CONFIG.simulation.step;
     }
     if (session.state === "gameover") {
@@ -364,6 +417,7 @@ function frame(now) {
       ui.isNewRecord = isRankedRound(session.getSnapshot()) && session.getSnapshot().score > recordAtStart;
       syncScore();
       history.capture(session.getSnapshot(), localSession.roundId);
+      finishReplay();
       input.reset();
     }
   } else {
@@ -406,6 +460,8 @@ window.addEventListener("blur", () => {
 window.addEventListener("focus", () => remoteSession?.resumeInput());
 canvas.addEventListener("pointerdown", () => remoteSession?.resumeInput());
 window.addEventListener("pagehide", () => {
+  // 页面卸载时不尝试保存未结算局，避免把半局误标成完整回放。
+  replayRecorder.discard();
   syncScore();
   scores.flushOnExit();
   music.setGameState("paused");

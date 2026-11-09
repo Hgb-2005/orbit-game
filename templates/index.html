@@ -9,8 +9,8 @@
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0220">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0220">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0230">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0230">
     </script>
   </head>
   <body>
@@ -256,7 +256,7 @@
               <div id="combo-hud" aria-live="polite" hidden></div>
               <div id="game-overlay" class="game-overlay">
                 <div class="overlay-card">
-                  <div class="release-badge">V0.22.0 <span>阶段 3 · 地图工坊 · 对局预设</span></div>
+                  <div class="release-badge">V0.23.0 <span>阶段 4 · 对局回放</span></div>
                   <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
                     <span>
                     </span>
@@ -420,6 +420,7 @@
               <button id="maps-open" class="text-button" type="button">地图工坊</button>
               <button id="visual-open" class="text-button" type="button">视觉设置</button>
               <button id="history-open" class="text-button" type="button">对局记录</button>
+              <button id="replays-open" class="text-button" type="button">对局回放</button>
               <label><input id="split-preview" type="checkbox"> 分裂方向预览</label>
               <label><input id="performance-toggle" type="checkbox"> 显示性能</label>
               <output id="performance-status" hidden></output>
@@ -594,6 +595,7 @@
           </aside>
         </div>
         {% include '_history.html' %}
+        {% include '_replays.html' %}
         {% include '_visual-settings.html' %}
         {% include '_maps.html' %}
         <footer class="page-footer">
@@ -611,7 +613,7 @@
             <i>
               /
             </i>
-            V.0220
+            V.0230
           </span>
         </footer>
         <noscript>
