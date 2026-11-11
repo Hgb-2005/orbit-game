@@ -3,11 +3,19 @@ import { getDifficulty, getStage } from "../core/progression.js";
 import { PositionBuffer } from "./position-buffer.js";
 import { Spectator } from './spectator.js';
 import { MovementPrediction } from './movement-prediction.js';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from "../skins/catalog.js";
 
 /** 远程会话只发送输入和读取快照，永不在客户端计算吞噬、生命或分数。 */
 export class RemoteSession {
-  constructor(placeholder, onChange = () => {}, socketFactory = url => new WebSocket(url), now = () => performance.now()) {
+  constructor(
+    placeholder,
+    onChange = () => {},
+    socketFactory = url => new WebSocket(url),
+    now = () => performance.now(),
+    appearance = DEFAULT_APPEARANCE,
+  ) {
     this.placeholder = placeholder;
+    this.appearance = normalizeAppearance(appearance);
     this.spectator = new Spectator();
     this.onChange = onChange;
     this.socketFactory = socketFactory;
@@ -202,7 +210,7 @@ export class RemoteSession {
       this.cancelReconnect();
       await this.connect();
       this.error = "";
-      this.send({ type, name: name.trim(), code: code?.trim(),
+      this.send({ type, name: name.trim(), code: code?.trim(), appearance: this.appearance,
         ...(type === "create" && rules ? { rules } : {}),
         ...(type === "create" && map ? { map } : {}) });
     } catch (error) { this.error = error.message; }
@@ -224,6 +232,7 @@ export class RemoteSession {
       this.lastActions = { split: false, spore: false };
       this.events.push({ type: "networkresume" });
       this.finishConnection?.();
+      this.sendAppearance();
       this.onChange();
     } else if (message.type === "room") {
       this.room = message;
@@ -349,6 +358,21 @@ export class RemoteSession {
     this.stateReceivedAt = 0; this.resetReplication(); this.onChange();
   }
   ready(value) { this.send({ type: "ready", ready: value }); }
+  setAppearance(value) {
+    const normalized = normalizeAppearance(value);
+    const changed = normalized.ballSkin !== this.appearance.ballSkin ||
+      normalized.sporeSkin !== this.appearance.sporeSkin;
+    this.appearance = normalized;
+    if (changed) this.sendAppearance();
+    return this.getAppearance();
+  }
+  getAppearance() {
+    return { ...this.appearance };
+  }
+  sendAppearance() {
+    if (this.connection !== "connected" || this.room?.state !== "waiting") return false;
+    return this.send({ type: "appearance", appearance: this.appearance });
+  }
   start() { this.send({ type: "start" }); }
   rematch() { this.send({ type: "rematch" }); }
   configure(rules) { this.send({ type: "configure", rules }); }
@@ -449,7 +473,7 @@ export class RemoteSession {
       predictionActive: this.prediction.enabled, predictionMs: Math.round(this.prediction.seconds * 1000),
       jitter: Math.round(this.positionBuffer.jitter), interpolationDelay: Math.round(this.positionBuffer.delay * 1000),
       quality: this.connection === "reconnecting" ? "reconnecting" : this.connection !== "connected" ? "offline" : this.state === "playing" && age !== null && age > .5 ? "poor" : this.rtt === null ? "unknown" : this.rtt <= 80 && pendingInputs <= 2 ? "good" : this.rtt <= 180 && pendingInputs <= 6 ? "fair" : "poor" };
-    if (!this.raw) return { ...this.placeholder, state: "ready", map: this.room?.map || this.placeholder.map,
+    if (!this.raw) return { ...this.placeholder, ...this.appearance, state: "ready", map: this.room?.map || this.placeholder.map,
       obstacles: this.room?.map?.obstacles || this.placeholder.obstacles || [], network };
     const raw = this.raw;
     const owner = raw.players.find(owner => owner.ownerId === this.playerId);

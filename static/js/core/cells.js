@@ -35,6 +35,7 @@ export function splitCells(cells, direction, bounds, nextId, maxCells = CONFIG.s
     const child = createBall({
       id: nextId(), ownerId: source.ownerId, x: source.x, y: source.y, mass,
       name: source.name, color: source.color, isPlayer: source.isPlayer,
+      ballSkin: source.ballSkin, sporeSkin: source.sporeSkin,
     });
     child.role = source.role;
     child.direction = { ...source.direction };

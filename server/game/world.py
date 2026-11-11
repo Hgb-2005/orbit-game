@@ -15,6 +15,7 @@ from .ai import decide, avoid_spikes, PROFILES
 from .safe_zone import SafeZone
 from .signals import TeamSignals
 from .items import COMBO_WINDOW, ItemSystem
+from ..appearance import normalize_appearance
 
 COLORS = ["#b4efcc", "#dd998d", "#b2a4dc", "#88adc9"]
 BOT_NAMES = ["人机·薄荷", "人机·追猎", "人机·小橘"]
@@ -86,6 +87,7 @@ class MultiplayerWorld:
         for index, member in enumerate(members):
             owner_id = member["id"]
             is_bot = bool(member.get("isBot"))
+            appearance = normalize_appearance(member)
             if is_bot:
                 self.bot_ids.add(owner_id)
             else:
@@ -94,6 +96,7 @@ class MultiplayerWorld:
             if team is not None and (type(team) is not int or team not in (0, 1)):
                 raise ValueError("队伍必须为薄荷队或星云队。")
             owner = {"ownerId": owner_id, "name": member["name"], "team": team,
+                     "ballSkin": appearance["ballSkin"], "sporeSkin": appearance["sporeSkin"],
                      "color": TEAMS[team][1] if team is not None else COLORS[index],
                      "lives": 3, "kills": 0, "deaths": 0, "score": 0, "eatenBalls": 0,
                      "peakMass": 36, "protectedUntil": 3, "connected": True, "isBot": is_bot, "zoneExposure": 0,
@@ -340,6 +343,7 @@ class MultiplayerWorld:
                          "y": clamp(source["y"] + dy * (source["radius"] + math.sqrt(SPORE_MASS) * 2.2 + 12), source["radius"], self.bounds_height - source["radius"]),
                          "mass": SPORE_MASS, "radius": math.sqrt(SPORE_MASS) * 2.2,
                          "vx": dx * SPORE_SPEED, "vy": dy * SPORE_SPEED, "color": owner["color"],
+                         "sporeSkin": owner["sporeSkin"],
                          "life": SPORE_LIFETIME, "alive": True}
                 self.spores.append(spore)
                 owner["sporeCooldown"] = SPORE_COOLDOWN
@@ -644,7 +648,7 @@ class MultiplayerWorld:
         return {"id": self.new_id("food"), **self.food_position(), "radius": 3.3, "color": self.rng.choice(FOOD_COLORS)}
 
     def standings(self):
-        ranked = sorted(({key: owner[key] for key in ("ownerId", "name", "color", "team", "lives", "kills", "deaths", "connected", "isBot")}
+        ranked = sorted(({key: owner[key] for key in ("ownerId", "name", "color", "team", "lives", "kills", "deaths", "connected", "isBot", "ballSkin", "sporeSkin")}
                          | {"mass": sum(c["mass"] for c in self.cells[owner_id]), "cells": len(self.cells[owner_id]), "eliminated": owner["lives"] <= 0}
                          for owner_id, owner in self.players.items()),
                         key=lambda entry: (-entry["lives"], -entry["kills"], -entry["mass"], entry["ownerId"]))
@@ -691,7 +695,7 @@ class MultiplayerWorld:
         players = []
         for owner_id, owner in self.players.items():
             sprint, splitting, spore = self.ability_snapshot(owner_id)
-            players.append({**{key: owner[key] for key in ("ownerId", "name", "color", "team", "score", "eatenBalls", "peakMass", "killer", "isBot")},
+            players.append({**{key: owner[key] for key in ("ownerId", "name", "color", "team", "score", "eatenBalls", "peakMass", "killer", "isBot", "ballSkin", "sporeSkin")},
                             "sprint": sprint, "split": splitting, "spore": spore, "ack": owner["appliedSeq"],
                             "regrouping": owner["input"].get("regroup", False) and len(self.cells[owner_id]) > 1,
                             "stats": owner["stats"].snapshot(self.finished), "zoneExposure": owner['zoneExposure'],
@@ -700,7 +704,7 @@ class MultiplayerWorld:
                             "pingCooldown": self.signals.remaining(owner_id, self.elapsed)})
         standings = self.standings()
         # 合成速度供对手插值；独立运动分量供本人重放移动。快照均为独立副本。
-        cells = [{key: cell[key] for key in ("id", "ownerId", "team", "name", "color", "alive")}
+        cells = [{key: cell[key] for key in ("id", "ownerId", "team", "name", "color", "alive", "ballSkin", "sporeSkin")}
                  | {key: round(cell[key], 3) for key in ("x", "y", "mass", "radius", "speed", "mergeRemaining")}
                  | {"vx": round(cell["vx"] + cell["impulseX"], 3), "vy": round(cell["vy"] + cell["impulseY"], 3),
                     "motion": {key: round(cell[key], 3) for key in ("vx", "vy", "impulseX", "impulseY")}}

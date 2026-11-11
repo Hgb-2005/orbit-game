@@ -14,10 +14,19 @@ import { PracticeCourse } from "./practice.js";
 import { ItemSystem } from "./items.js";
 import { DEFAULT_MAP, mapIsClear, normalizeMap } from "../maps/map-schema.js";
 import { resolveObstacleCollisions, resolveSporeObstacleCollisions } from "../maps/obstacles.js";
+import {
+  BALL_SKIN_IDS,
+  DEFAULT_APPEARANCE,
+  SPORE_SKIN_IDS,
+  normalizeAppearance,
+} from "../skins/catalog.js";
 
 /** 纯游戏状态与规则，不访问 DOM、Canvas、网络和数据库。 */
 export class World {
   constructor(random = Math.random, map = DEFAULT_MAP) {
+    // 保留普通局的随机源；每日挑战只为本局替换 this.random，
+    // 下一局没有传入 random 时会恢复，避免固定种子泄漏到经典/生存模式。
+    this.randomSource = random;
     this.random = random;
     this.map = normalizeMap(map);
     this.bounds = { width: this.map.width, height: this.map.height };
@@ -35,8 +44,13 @@ export class World {
     // 单机重开和联机换图都经过同一入口。地图一旦切换，边界、障碍和
     // 出生点必须整体替换，不能只改尺寸而留下上一张地图的实体。
     if (options.map) this.setMap(options.map);
-    this.mode = ["survival", "practice"].includes(mode) ? mode : "classic";
-    this.survival = this.mode === "survival" ? new SurvivalRound() : null;
+    this.random = typeof options.random === "function" ? options.random : this.randomSource;
+    this.mode = ["survival", "practice", "daily"].includes(mode) ? mode : "classic";
+    // 外观属于控制者而非碰撞规则；本地实体在分身、扎刺和复活时复制它。
+    this.appearance = normalizeAppearance(options.appearance ?? options);
+    this.survival = ["survival", "daily"].includes(this.mode)
+      ? new SurvivalRound(options.challenge?.rules ?? {})
+      : null;
     this.practice = this.mode === "practice" ? new PracticeCourse(drill) : null;
     this.stats = new RoundStats();
     this.regrouping = false;
@@ -73,6 +87,7 @@ export class World {
     this.lastPlayer = createBall({
       id: "player", x: spawn.x, y: spawn.y,
       mass: CONFIG.player.initialMass, name: "你", color: "#b4efcc", isPlayer: true,
+      ...this.appearance,
     });
     this.playerCells = [this.lastPlayer];
     // 初始镜头必须围绕玩家出生点，而不是默认地图中心。自定义地图的出生点
@@ -89,7 +104,8 @@ export class World {
     this.hotspots = new FoodHotspots(this.bounds, this.random, this.map);
     this.foods = Array.from({ length: CONFIG.food.count }, () => this.createFood());
     this.bots = [];
-    for (let i = 0; i < CONFIG.bots.count; i++) {
+    const botCount = options.challenge?.rules?.botCount ?? CONFIG.bots.count;
+    for (let i = 0; i < botCount; i++) {
       const bot = this.createBot(i, roleForIndex(i));
       if (bot) {
         this.bots.push(bot);
@@ -184,6 +200,8 @@ export class World {
     const bot = createBall({
       id: `bot-${this.nextId++}`, x: position.x, y: position.y, mass,
       name: BOT_NAMES[index % BOT_NAMES.length], color: BOT_COLORS[index % BOT_COLORS.length],
+      ballSkin: BALL_SKIN_IDS[index % BALL_SKIN_IDS.length],
+      sporeSkin: SPORE_SKIN_IDS[index % SPORE_SKIN_IDS.length],
     });
     bot.thinkTimer = this.random() * CONFIG.bots.thinkInterval;
     bot.role = role;
@@ -325,7 +343,7 @@ export class World {
     const spore = createSpore({ id: `spore-${this.nextId++}`, ownerId: source.ownerId,
       x: Math.max(source.radius, Math.min(this.bounds.width - source.radius, source.x + dx * (source.radius + Math.sqrt(CONFIG.spore.mass) * 2.2 + 12))),
       y: Math.max(source.radius, Math.min(this.bounds.height - source.radius, source.y + dy * (source.radius + Math.sqrt(CONFIG.spore.mass) * 2.2 + 12))),
-      direction, color: source.color });
+      direction, color: source.color, sporeSkin: source.sporeSkin });
     resolveSporeObstacleCollisions(spore, this.obstacles, this.bounds);
     this.spores.push(spore);
     this.sporeCooldown = CONFIG.spore.cooldown;
@@ -541,7 +559,8 @@ export class World {
     const position = findRespawnPosition(this.bounds, owner.initialMass, [...this.playerCells, ...this.bots],
       this.random, this.map);
     const ball = createBall({ ...position, id: `respawn-${this.nextId++}`, ownerId: owner.ownerId,
-      mass: owner.initialMass, name: owner.name, color: owner.color, isPlayer: owner.isPlayer });
+      mass: owner.initialMass, name: owner.name, color: owner.color, isPlayer: owner.isPlayer,
+      ballSkin: owner.ballSkin, sporeSkin: owner.sporeSkin });
     ball.role = owner.role;
     ball.targetId = null;
     ball.targetKind = null;

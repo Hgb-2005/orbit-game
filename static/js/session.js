@@ -1,8 +1,12 @@
 import { World } from "./core/world.js";
 import { getLeaderboard } from "./core/leaderboard.js";
+import { createSeededRandom } from "./core/random.js";
+import { ChallengeTracker } from "./challenges/daily-run.js";
+import { DEFAULT_MAP } from "./maps/map-schema.js";
 
-/** 练习成绩从所有保存入口排除；联机成绩仅由服务器保存。 */
-export const isRankedRound = snapshot => !snapshot.network && snapshot.mode !== "practice";
+/** 练习与每日挑战使用独立记录；联机成绩仅由服务器保存。 */
+export const isRankedRound = snapshot =>
+  !snapshot.network && !["practice", "daily"].includes(snapshot.mode);
 
 /**
  * 会话是 UI 与规则引擎之间的边界。
@@ -15,11 +19,22 @@ export class LocalSession {
     this.state = "ready";
     this.roundId = '';
     this.simulationMs = 0;
+    this.challenge = null;
   }
 
   start(viewSize, mode = "classic", drill = "split", options = {}) {
     this.roundId = `local-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
-    this.world.reset(viewSize, mode, drill, options);
+    const challenge = mode === "daily" ? options.challenge : null;
+    if (challenge && (challenge.mode !== "daily" || !challenge.seed)) {
+      throw new TypeError("每日挑战缺少有效契约");
+    }
+    this.challenge = challenge ? new ChallengeTracker(challenge) : null;
+    this.world.reset(viewSize, mode, drill, {
+      ...options,
+      // 每日题面必须共享同一张地图；即使调用方误传了自定义地图也回退到标准场。
+      map: challenge ? DEFAULT_MAP : options.map,
+      random: challenge ? createSeededRandom(challenge.seed) : undefined,
+    });
     this.state = "playing";
     this.simulationMs = 0;
   }
@@ -43,10 +58,11 @@ export class LocalSession {
     this.world.update(dt, input);
     this.simulationMs = (globalThis.performance?.now?.() ?? Date.now()) - started;
     if (this.world.gameOver) this.state = "gameover";
+    if (this.challenge) this.challenge.update(this.baseSnapshot(), this.world.events, dt);
     return this.world.events;
   }
 
-  getSnapshot() {
+  baseSnapshot() {
     const world = this.world;
     const cells = [...world.playerCells, ...world.bots];
     const survival = world.survival?.getSnapshot(cells, world.elapsed) ?? null;
@@ -67,6 +83,13 @@ export class LocalSession {
       metrics: { simulationMs: this.simulationMs, collisionMs: world.lastCollisionMs || 0 },
       hotspots: world.hotspots.getSnapshot(),
       items: world.itemSystem.snapshot("player"),
+    };
+  }
+
+  getSnapshot() {
+    return {
+      ...this.baseSnapshot(),
+      challenge: this.challenge?.snapshot() ?? null,
     };
   }
 }

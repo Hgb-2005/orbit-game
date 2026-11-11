@@ -4,6 +4,12 @@ from flask import Blueprint, jsonify, render_template, request
 
 from .database import read_record, save_record
 from .database import read_match_history, save_match_history
+from .challenges import (
+    build_daily_challenge,
+    challenge_summary,
+    save_challenge_run,
+    validate_challenge_run,
+)
 from .history import local_history
 from .network_info import lan_addresses
 from urllib.parse import urlsplit
@@ -68,3 +74,28 @@ def submit_history():
     except ValueError as error:
         return jsonify(error=str(error)), 400
     return jsonify(save_match_history(match))
+
+
+@bp.get("/api/challenge/today")
+def daily_challenge():
+    response = jsonify({**build_daily_challenge(), "summary": challenge_summary()})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp.get("/api/challenges/summary")
+def challenges_summary():
+    response = jsonify(challenge_summary())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp.post("/api/challenges")
+def submit_challenge():
+    if not request.is_json:
+        return jsonify(error="请使用 JSON 提交每日挑战。"), 415
+    try:
+        run = validate_challenge_run(request.get_json(silent=True))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    return jsonify(save_challenge_run(run))

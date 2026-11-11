@@ -1,4 +1,5 @@
 import { CONFIG } from "../config.js";
+import { DEFAULT_APPEARANCE, normalizeAppearance } from "../skins/catalog.js";
 
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 export const distanceSquared = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
@@ -9,9 +10,22 @@ export function speedForMass(mass) {
 }
 
 /** 实体使用普通数据对象，方便日后通过 WebSocket 序列化快照。 */
-export function createBall({ id, x, y, mass, name, color, isPlayer = false, ownerId = isPlayer ? "player" : id }) {
+export function createBall({
+  id,
+  x,
+  y,
+  mass,
+  name,
+  color,
+  isPlayer = false,
+  ownerId = isPlayer ? "player" : id,
+  ballSkin = DEFAULT_APPEARANCE.ballSkin,
+  sporeSkin = DEFAULT_APPEARANCE.sporeSkin,
+}) {
+  const appearance = normalizeAppearance({ ballSkin, sporeSkin });
   return {
     id, ownerId, x, y, mass, name, color, isPlayer,
+    ...appearance,
     radius: Math.sqrt(mass) * CONFIG.rules.radiusScale,
     speed: speedForMass(mass),
     vx: 0, vy: 0,

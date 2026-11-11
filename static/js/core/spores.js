@@ -1,18 +1,20 @@
 import { CONFIG } from "../config.js";
+import { DEFAULT_APPEARANCE, normalizeSporeSkin } from "../skins/catalog.js";
 import { clamp, distanceSquared, growBall } from "./entities.js";
 
 /**
  * 孢子是独立的、可序列化的移动实体。
  * 规则层不依赖 Canvas，后续联机时可以直接把数组放进 WebSocket 快照。
  */
-export function createSpore({ id, x, y, direction, ownerId, color }) {
+export function createSpore({ id, x, y, direction, ownerId, color, sporeSkin = DEFAULT_APPEARANCE.sporeSkin }) {
   const length = Math.hypot(direction?.x ?? 0, direction?.y ?? 0) || 1;
   return {
     id, ownerId, x, y, mass: CONFIG.spore.mass,
     radius: Math.sqrt(CONFIG.spore.mass) * 2.2,
     vx: (direction?.x ?? 1) / length * CONFIG.spore.speed,
     vy: (direction?.y ?? 0) / length * CONFIG.spore.speed,
-    color: color || "#9bd7bc", life: CONFIG.spore.lifetime, alive: true,
+    color: color || "#9bd7bc", sporeSkin: normalizeSporeSkin(sporeSkin),
+    life: CONFIG.spore.lifetime, alive: true,
   };
 }
 

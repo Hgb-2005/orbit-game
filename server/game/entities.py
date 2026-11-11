@@ -22,6 +22,8 @@ def grow(ball, amount):
 def ball(ball_id, owner, position):
     entity = {"id": ball_id, "ownerId": owner["ownerId"], **position,
               "name": owner["name"], "color": owner["color"], "mass": 0,
+              "ballSkin": owner.get("ballSkin", "mint-orbit"),
+              "sporeSkin": owner.get("sporeSkin", "dew-drop"),
               "vx": 0, "vy": 0, "impulseX": 0, "impulseY": 0,
               "mergeRemaining": 0, "alive": True, "isPlayer": False}
     entity["team"] = owner.get("team")

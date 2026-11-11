@@ -22,7 +22,7 @@ export class PracticeCourse {
     world.hotspots.zones = [];
     const center = { x: world.bounds.width / 2, y: world.bounds.height / 2 };
     const make = (id, mass, dx, dy) => createBall({ id, mass, x: center.x + dx, y: center.y + dy,
-      isPlayer: true, color: "#b4efcc", name: "你" });
+      isPlayer: true, color: "#b4efcc", name: "你", ...world.appearance });
     world.playerCells = [make("player", this.drill.id === "split" ? 144 : 240, -150, 0)];
     world.lastPlayer = world.player;
     if (this.drill.id === "split") this.spawnTarget(world);
@@ -30,7 +30,7 @@ export class PracticeCourse {
       world.spikes = [{ id: "practice-spike", x: center.x + 60, y: center.y, radius: CONFIG.spikes.radius,
         color: "#72c98e", charge: 0 }];
       const dummy = createBall({ id: "practice-obstacle", mass: 180, x: center.x + 330, y: center.y,
-        name: "反击靶", color: "#dd998d" });
+        name: "反击靶", color: "#dd998d", ballSkin: "ember-sun", sporeSkin: "spark-crystal" });
       dummy.thinkTimer = Infinity; dummy.role = "practice";
       world.bots = [dummy];
     }
@@ -46,7 +46,7 @@ export class PracticeCourse {
     world.playerCells = [[-135, -100], [135, -100], [-135, 100], [135, 100]].map(([dx, dy]) => {
       const cell = createBall({ id: `practice-cell-${world.nextId++}`, mass: 72,
         x: world.bounds.width / 2 + dx, y: world.bounds.height / 2 + dy,
-        isPlayer: true, color: "#b4efcc", name: "你" });
+        isPlayer: true, color: "#b4efcc", name: "你", ...world.appearance });
       cell.mergeRemaining = CONFIG.split.mergeDelay;
       return cell;
     });
@@ -55,7 +55,8 @@ export class PracticeCourse {
 
   spawnTarget(world) {
     const target = createBall({ id: `practice-target-${world.nextId++}`, mass: 44,
-      x: world.bounds.width / 2 + 120, y: world.bounds.height / 2, name: "吞噬靶", color: "#88adc9" });
+      x: world.bounds.width / 2 + 120, y: world.bounds.height / 2, name: "吞噬靶", color: "#88adc9",
+      ballSkin: "ocean-tide", sporeSkin: "comet-tail" });
     target.thinkTimer = Infinity; target.role = "practice";
     world.bots.push(target);
   }

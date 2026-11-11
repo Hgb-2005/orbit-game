@@ -3,15 +3,24 @@ import { DEFAULT_MAP, mapIsClear } from "../maps/map-schema.js";
 
 /** 生命属于控制者而非分身；身份、命数和战绩在复活时保留，方便以后由服务端管理。 */
 export class SurvivalRound {
-  constructor() {
-    this.duration = CONFIG.survival.duration;
+  constructor({
+    duration = CONFIG.survival.duration,
+    initialLives = CONFIG.survival.initialLives,
+  } = {}) {
+    this.duration = Number.isFinite(duration) && duration > 0
+      ? duration
+      : CONFIG.survival.duration;
+    this.initialLives = Number.isInteger(initialLives) && initialLives > 0
+      ? initialLives
+      : CONFIG.survival.initialLives;
     this.roster = new Map();
   }
 
   register(ball) {
     this.roster.set(ball.ownerId, {
       ownerId: ball.ownerId, name: ball.name, color: ball.color, isPlayer: ball.isPlayer,
-      role: ball.role, initialMass: ball.mass, lives: CONFIG.survival.initialLives,
+      ballSkin: ball.ballSkin, sporeSkin: ball.sporeSkin,
+      role: ball.role, initialMass: ball.mass, lives: this.initialLives,
       kills: 0, deaths: 0, protectedUntil: CONFIG.survival.respawnProtection,
     });
   }

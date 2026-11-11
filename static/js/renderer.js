@@ -8,6 +8,7 @@ import { VisualSettings } from "./visual/visual-settings.js";
 import { CanvasBackground } from "./visual/canvas-background.js";
 import { FluidRenderer } from "./visual/fluid-renderer.js";
 import { ParticlePool, PARTICLE_KIND } from "./visual/particle-pool.js";
+import { drawBallSkin, drawSporeSkin } from "./skins/renderers.js";
 
 const THEMES = {
   dark: { background: "#101a17", grid: "#26342b", border: "#586f5e", text: "#d6e0d9", muted: "#718979", player: "#b4efcc", playerInk: "#203d2a", mini: "#15211ce8", miniBorder: "#334539" },
@@ -43,7 +44,8 @@ export class Renderer {
     this.frameMs = 16.67;
     this.previewEnabled = false;
     this.aim = null;
-    this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.reducedMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     this.touchQuery = window.matchMedia("(pointer: coarse), (max-width: 760px)");
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas.parentElement);
@@ -192,6 +194,11 @@ export class Renderer {
       ctx.arc(spore.x, spore.y, spore.radius || 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
+      drawSporeSkin(ctx, spore, {
+        time: snapshot.elapsed,
+        theme: this.theme,
+        reducedMotion: this.reducedMotion,
+      });
     }
 
     for (const food of snapshot.foods) {
@@ -572,6 +579,14 @@ export class Renderer {
       ctx.fill();
       ctx.globalAlpha = 1;
     }
+    // WebGL 与纯 Canvas 共用同一层外观纹样，切换画质时轮廓保持一致。
+    drawBallSkin(ctx, ball, {
+      time: snapshot.elapsed,
+      radius,
+      detail: radius < 16 ? .35 : radius < 30 ? .7 : 1,
+      theme: this.theme,
+      reducedMotion: this.reducedMotion,
+    });
     if (ball.isAlly || (snapshot.team && ball.isPlayer)) {
       ctx.strokeStyle = snapshot.team.color;
       ctx.lineWidth = (ball.isPlayer ? 2.5 : 1.5) / this.camera.zoom;

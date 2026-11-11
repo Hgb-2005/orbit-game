@@ -9,7 +9,8 @@ import { BackgroundMusic } from "./audio/music.js";
 import { SoundEffects } from "./audio/effects.js";
 import { VisualFeedback } from "./presentation/feedback.js";
 import { RemoteSession } from "./network/remote-session.js";
-import { LobbyUI } from "./network/lobby-ui.js?v=0210";
+import { LobbyUI } from "./network/lobby-ui.js?v=0270";
+import { AppearanceUI } from "./skins/appearance-ui.js?v=0270";
 import { TacticsUI } from './presentation/tactics-ui.js';
 import { HistoryService } from './services/history.js';
 import { HistoryUI } from './presentation/history-ui.js';
@@ -17,7 +18,7 @@ import { VisualAudioAnalyser } from "./visual/audio-visualizer.js";
 import { VisualSettingsUI } from "./visual/visual-settings-ui.js";
 import { MapStore } from "./maps/map-store.js";
 import { MapsUI } from "./maps/maps-ui.js";
-import { mapFromLocation } from "./maps/map-schema.js";
+import { DEFAULT_MAP, mapFromLocation } from "./maps/map-schema.js";
 import { ReplayRecorder } from "./replay/recorder.js";
 import { ReplayStorage } from "./replay/storage.js";
 import { ReplayUI } from "./presentation/replay-ui.js";
@@ -25,6 +26,7 @@ import { ControlSettings } from "./settings/controls.js";
 import { SettingsUI } from "./settings/settings-ui.js";
 import { ErrorMonitor } from "./debug/error-monitor.js";
 import { DiagnosticsUI } from "./debug/diagnostics-ui.js";
+import { ChallengeService } from "./services/challenges.js";
 
 const canvas = document.getElementById("game-canvas");
 const visualCanvas = document.getElementById("game-visual");
@@ -35,10 +37,14 @@ const ui = new GameUI({ controls: controlSettings });
 const localSession = new LocalSession();
 let session = localSession;
 let remoteSession = null;
+const appearanceUI = new AppearanceUI(browserStorage, appearance => {
+  remoteSession?.setAppearance(appearance);
+});
 const camera = new Camera();
 const renderer = new Renderer(canvas, camera, visualCanvas);
 const input = new InputController(canvas, document.getElementById("touch-joystick"), controlSettings);
 const scores = new ScoreService(record => ui.renderRecord(record));
+const challenges = new ChallengeService(state => ui.setChallenge(state));
 const music = new BackgroundMusic(state => ui.renderMusic(state));
 const effects = new SoundEffects(() => music.context, state => ui.renderEffects(state), { supported: music.supported });
 const visualAudio = new VisualAudioAnalyser();
@@ -97,7 +103,7 @@ const maps = new MapsUI(mapStore, {
       const element = document.getElementById(id);
       if (element && value !== undefined && value !== null) element.value = String(value);
     }
-    if (["classic", "survival", "practice"].includes(rules.mode)) {
+    if (["classic", "survival", "daily", "practice"].includes(rules.mode)) {
       ui.mode = rules.mode;
       ui.onModeChange?.(rules.mode);
     }
@@ -256,7 +262,9 @@ function start(forceNewGame = false) {
     ui.focusOnStart();
     renderer.resize();
     session.start({ width: renderer.width, height: renderer.height }, ui.mode, ui.practiceDrill, {
-      map: mapStore.active(),
+      map: ui.mode === "daily" ? DEFAULT_MAP : mapStore.active(),
+      appearance: appearanceUI.getSelection(),
+      challenge: ui.mode === "daily" ? challenges.todayContract() : undefined,
     });
     renderer.resetEffects();
     feedback.reset();
@@ -266,7 +274,8 @@ function start(forceNewGame = false) {
     const snapshot = session.getSnapshot();
     replayRecorder.start(snapshot, {
       source: "local",
-      title: `${ui.mode === "survival" ? "生存" : "经典"} · ${mapStore.active()?.name ?? "标准球场"}`,
+      title: `${ui.mode === "daily" ? "每日挑战" : ui.mode === "survival" ? "生存" : "经典"} · ${
+        ui.mode === "daily" ? DEFAULT_MAP.name : mapStore.active()?.name ?? "标准球场"}`,
     });
     camera.update(snapshot.cameraTarget ?? snapshot.player, snapshot.bounds, renderer.width, renderer.height, 0, true);
   }
@@ -318,12 +327,18 @@ ui.onModeChange = mode => {
   finishReplay();
   if (mode === "multiplayer") {
     syncScore();
-    remoteSession = new RemoteSession(new LocalSession().getSnapshot(), () => {
-      if (session !== remoteSession) return;
-      ui.lastState = "";
-      music.setGameState(session.state); effects.setGameState(session.state);
-      renderHud();
-    });
+    remoteSession = new RemoteSession(
+      new LocalSession().getSnapshot(),
+      () => {
+        if (session !== remoteSession) return;
+        ui.lastState = "";
+        music.setGameState(session.state); effects.setGameState(session.state);
+        renderHud();
+      },
+      undefined,
+      undefined,
+      appearanceUI.getSelection(),
+    );
     session = remoteSession;
   } else {
     remoteSession?.close(); remoteSession = null;
@@ -409,7 +424,7 @@ ui.bind({
   },
   practiceExit: () => {
     if (session instanceof RemoteSession || !session.getSnapshot().practice) return;
-    localSession.world.reset(); localSession.state = "ready";
+    localSession.world.reset({ appearance: appearanceUI.getSelection() }); localSession.state = "ready";
     ui.mode = "classic"; document.getElementById("game-mode").value = "classic";
     input.reset(); feedback.reset(); renderer.resetEffects(); ui.resetRound(); ui.lastState = "";
     music.setGameState("ready"); effects.setGameState("ready"); renderHud();
@@ -459,7 +474,11 @@ function frame(now) {
       effects.setGameState("gameover");
       ui.isNewRecord = isRankedRound(session.getSnapshot()) && session.getSnapshot().score > recordAtStart;
       syncScore();
-      history.capture(session.getSnapshot(), localSession.roundId);
+      if (session.getSnapshot().mode === "daily") {
+        void challenges.capture(session.getSnapshot(), localSession.roundId);
+      } else if (["classic", "survival"].includes(session.getSnapshot().mode)) {
+        history.capture(session.getSnapshot(), localSession.roundId);
+      }
       finishReplay();
       input.reset();
     }
@@ -508,10 +527,12 @@ window.addEventListener("pagehide", () => {
   replayRecorder.discard();
   syncScore();
   scores.flushOnExit();
+  challenges.flushOnExit();
   music.setGameState("paused");
   effects.setGameState("paused");
   visualAudio.disconnect();
   visualSettingsUI?.dispose();
+  appearanceUI.dispose();
   settingsUI.dispose();
   diagnosticsUI.dispose();
   errorMonitor.dispose();
@@ -519,9 +540,15 @@ window.addEventListener("pagehide", () => {
   remoteSession?.close();
 });
 window.addEventListener("online", () => { void scores.load(); });
-window.addEventListener('online', () => { void history.flush(); void history.load(); });
+window.addEventListener('online', () => {
+  void history.flush();
+  void history.load();
+  void challenges.flush();
+  void challenges.loadSummary();
+});
 setInterval(() => {
   void history.flush();
+  void challenges.flush();
   if (scores.status === "offline") void scores.load();
   else void scores.flush();
 }, 5000);
@@ -536,4 +563,5 @@ if (/^\d{6}$/.test(new URLSearchParams(location.search).get("room") ?? "")) {
 void scores.load();
 void history.load();
 void history.flush();
+void challenges.loadToday().finally(() => challenges.loadSummary());
 requestAnimationFrame(frame);

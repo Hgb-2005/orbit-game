@@ -2,6 +2,8 @@ const $ = id => document.getElementById(id);
 import { ROOM_DEFAULTS, ROOM_PRESETS, RULE_FIELDS, MODE_NAMES, describeRules, presetName } from "./room-rules.js";
 import { shareRoomInvite } from "./invite-share.js";
 import { MapStore } from "../maps/map-store.js";
+import { getBallSkin, getSporeSkin } from "../skins/catalog.js";
+import { drawBallSkin, drawSporeSkin } from "../skins/renderers.js";
 
 /** 房间显示与模拟分开；昵称一律用 textContent，不解释为 HTML。 */
 export class LobbyUI {
@@ -9,6 +11,8 @@ export class LobbyUI {
     this.getSession = getSession;
     this.maps = maps;
     this.signature = "";
+    this.reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    this.thumbnailTime = performance.now() / 1000;
     this.inviteOrigin = location.origin;
     void fetch("/api/network-info").then(response => response.json()).then(info => {
       if (info.urls?.length) {
@@ -173,13 +177,74 @@ export class LobbyUI {
     url.search = new URLSearchParams({ room: room.code }).toString();
     $("room-invite").value = url.href;
     $("room-members").replaceChildren(...room.members.map(member => {
-      const row = document.createElement("li"), name = document.createElement("span"), status = document.createElement("strong");
+      const row = document.createElement("li");
+      const thumbnail = this.createAppearanceThumbnail(member);
+      const copy = document.createElement("span");
+      const name = document.createElement("b");
+      const status = document.createElement("strong");
+      copy.className = "room-member-copy";
       const team = member.team == null ? "" : member.team === 0 ? " · 薄荷队" : " · 星云队";
       name.textContent = `${member.name}${member.id === playerId ? "（你）" : ""}${member.id === room.hostId ? " · 房主" : ""}${team}`;
       if (member.team != null) name.style.color = member.team === 0 ? "#93d9bc" : "#b5a3e8";
       status.textContent = !member.connected ? "重连中" : room.state !== "waiting" ? "本局成员" : member.ready ? "已准备" : "待准备";
-      row.dataset.ready = String(member.ready); row.dataset.connected = String(member.connected !== false); row.append(name, status); return row;
+      copy.append(name, status);
+      row.dataset.ready = String(member.ready);
+      row.dataset.connected = String(member.connected !== false);
+      row.append(thumbnail, copy);
+      return row;
     }));
+  }
+
+  /**
+   * 准备室用与正式球场相同的绘制器展示球和孢子外观。这里只绘制一帧，
+   * 不在每个成员行单独启动 requestAnimationFrame，避免房间人数增加后
+   * 产生多组动画循环。外观变化会改变房间签名并重新绘制。
+   */
+  createAppearanceThumbnail(member) {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    const ballSkin = getBallSkin(member.ballSkin);
+    const sporeSkin = getSporeSkin(member.sporeSkin);
+    canvas.className = "room-member-thumbnail";
+    canvas.width = 66;
+    canvas.height = 34;
+    canvas.setAttribute("aria-hidden", "true");
+    if (!context) return canvas;
+
+    const background = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    background.addColorStop(0, "#14231f");
+    background.addColorStop(1, "#293d37");
+    context.fillStyle = background;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = ballSkin.accent;
+    context.beginPath();
+    context.arc(20, 17, 11, 0, Math.PI * 2);
+    context.fill();
+    drawBallSkin(context, {
+      id: member.id,
+      ballSkin: member.ballSkin,
+      x: 20,
+      y: 17,
+      radius: 11,
+    }, {
+      time: this.thumbnailTime,
+      reducedMotion: this.reducedMotion,
+      detail: .7,
+    });
+    context.fillStyle = sporeSkin.accent;
+    context.beginPath();
+    context.arc(48, 17, 5, 0, Math.PI * 2);
+    context.fill();
+    drawSporeSkin(context, {
+      id: member.id,
+      sporeSkin: member.sporeSkin,
+      x: 48,
+      y: 17,
+      radius: 5,
+      vx: 1,
+      vy: 0,
+    }, { time: this.thumbnailTime, reducedMotion: this.reducedMotion });
+    return canvas;
   }
 
   readRules(prefix) {

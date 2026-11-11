@@ -1,7 +1,7 @@
 const PENDING_KEY = 'orbit.pending-history';
 
 export function localMatch(snapshot, id) {
-  if (!id || snapshot.network || snapshot.mode === 'practice' || snapshot.state !== 'gameover') return null;
+  if (!id || snapshot.network || ['practice', 'daily'].includes(snapshot.mode) || snapshot.state !== 'gameover') return null;
   return { id, mode: snapshot.mode, duration: Number(snapshot.elapsed.toFixed(3)), score: snapshot.score,
     rank: snapshot.result?.rank ?? null, won: snapshot.result?.won ?? false,
     kills: snapshot.result?.kills ?? 0, stats: snapshot.stats };

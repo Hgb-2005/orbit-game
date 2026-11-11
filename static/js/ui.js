@@ -31,17 +31,20 @@ export class GameUI {
     this.feedbackPhase = "normal";
     this.mode = "classic";
     this.practiceDrill = "split";
+    this.challengeState = null;
+    this.lastChallengeSignature = "";
     this.practiceProgress = readPracticeProgress();
     this.practiceSavedAt = null;
     this.onModeChange = () => {};
     this.lastItemEffects = new Set();
-    this.labelObstacles = [...document.querySelectorAll(".arena-corner, .canvas-stage, .hotspot-status, #danger-hint, #leaderboard, #protection-hint, #ability-panel, #item-effect-hud, #combo-hud, #milestone-banner, #touch-joystick")];
+    this.labelObstacles = [...document.querySelectorAll(".arena-corner, .canvas-stage, .hotspot-status, #challenge-hud, #danger-hint, #leaderboard, #protection-hint, #ability-panel, #item-effect-hud, #combo-hud, #milestone-banner, #touch-joystick")];
     $("leaderboard").open = !window.matchMedia("(max-width: 760px)").matches;
     try {
       this.theme = localStorage.getItem("orbit.theme") === "light" ? "light" : "dark";
       const focus = localStorage.getItem("orbit.focus");
       if (focus === "on" || focus === "off") this.focusPreference = focus === "on";
-      if (localStorage.getItem("orbit.mode") === "survival") this.mode = "survival";
+      const storedMode = localStorage.getItem("orbit.mode");
+      if (["survival", "daily"].includes(storedMode)) this.mode = storedMode;
     } catch { /* 无存储权限时使用默认主题。 */ }
     this.applyTheme();
     $("game-mode").value = this.mode;
@@ -52,8 +55,8 @@ export class GameUI {
     practiceReset, practiceNext, practiceExit, practiceStart, quality, music, volume, effects }) {
     $("quality-select").addEventListener("change", event => quality(event.target.value));
     $("game-mode").addEventListener("change", event => {
-      this.mode = ["survival", "multiplayer", "practice"].includes(event.target.value) ? event.target.value : "classic";
-      if (["classic", "survival"].includes(this.mode)) {
+      this.mode = ["survival", "daily", "multiplayer", "practice"].includes(event.target.value) ? event.target.value : "classic";
+      if (["classic", "survival", "daily"].includes(this.mode)) {
         try { localStorage.setItem("orbit.mode", this.mode); } catch { /* 本局设置仍然有效。 */ }
       }
       this.onModeChange(this.mode);
@@ -216,6 +219,121 @@ export class GameUI {
     try { localStorage.setItem("orbit.theme", this.theme); } catch { /* 主题照常切换。 */ }
   }
 
+  setChallenge(state) {
+    this.challengeState = state;
+    if (this.lastSnapshot) this.renderChallenge(this.lastSnapshot);
+    else this.renderChallengePreview({ state: "ready", mode: this.mode });
+  }
+
+  challengeProgressText(goal) {
+    if (goal.unit === "整局") {
+      return goal.state === "completed" ? "整局完成" : goal.state === "failed" ? "挑战失败" : "进行中";
+    }
+    const progress = Number.isInteger(goal.progress) ? goal.progress : Number(goal.progress).toFixed(1);
+    return `${progress} / ${goal.target} ${goal.unit}`;
+  }
+
+  challengeGoalItem(goal, { compact = false } = {}) {
+    const item = document.createElement("li");
+    item.dataset.state = goal.state ?? "active";
+    const marker = document.createElement("span");
+    marker.className = "challenge-goal-marker";
+    marker.setAttribute("aria-hidden", "true");
+    marker.textContent = goal.state === "completed" ? "✓" : goal.state === "failed" ? "×" : "◆";
+    const copy = document.createElement("div");
+    const head = document.createElement("div");
+    head.className = "challenge-goal-head";
+    const label = document.createElement("strong");
+    label.textContent = goal.label;
+    const progress = document.createElement("span");
+    progress.textContent = this.challengeProgressText(goal);
+    head.append(label, progress);
+    copy.append(head);
+    if (!compact) {
+      const description = document.createElement("p");
+      description.textContent = goal.description;
+      copy.append(description);
+    }
+    if (goal.failureReason) {
+      const reason = document.createElement("small");
+      reason.textContent = goal.failureReason;
+      copy.append(reason);
+    }
+    item.append(marker, copy);
+    return item;
+  }
+
+  challengeServiceCopy() {
+    const state = this.challengeState;
+    const pending = state?.pending ?? 0;
+    const status = state?.status ?? "loading";
+    if (status === "saved") return { label: "已同步", note: "今日题面与成绩已保存到本机数据库。" };
+    if (status === "saving") return { label: "保存中", note: "正在校验并保存挑战成绩…" };
+    if (pending) return { label: `待补交 ${pending}`, note: "服务暂不可用，成绩已保存在当前浏览器，联网后会自动补交。" };
+    if (status === "offline") return { label: "离线题面", note: "当前使用同一固定种子生成题面；联网后会自动恢复同步。" };
+    return { label: "同步中", note: "正在读取今日题面与个人挑战记录…" };
+  }
+
+  renderChallengePreview(snapshot) {
+    const challenge = snapshot.challenge ?? this.challengeState?.contract;
+    const visible = this.mode === "daily" && snapshot.state === "ready" && !snapshot.network;
+    $("daily-challenge-preview").hidden = !visible;
+    if (!visible) return;
+    const summary = this.challengeState?.summary ?? {};
+    const service = this.challengeServiceCopy();
+    $("daily-challenge-title").textContent = challenge?.title ?? "今日挑战";
+    $("challenge-service-status").textContent = service.label;
+    $("challenge-service-status").dataset.state = this.challengeState?.status ?? "loading";
+    $("daily-goal-preview").replaceChildren(...(challenge?.goals ?? []).map(goal => this.challengeGoalItem(goal)));
+    $("challenge-best").textContent = number(summary.todayBest ?? 0);
+    $("challenge-completion-rate").textContent = `${summary.completionRate ?? 0}%`;
+    $("challenge-streak").textContent = `${summary.streak ?? 0} 天`;
+    $("challenge-preview-note").textContent = service.note;
+  }
+
+  renderChallenge(snapshot) {
+    // 结算后模式选择器仍可操作；切到其他模式时不能继续显示上一局每日挑战卡。
+    const daily = snapshot.mode === "daily" && this.mode === "daily";
+    const challenge = snapshot.challenge;
+    const hudVisible = daily && Boolean(challenge) && ["playing", "paused"].includes(snapshot.state);
+    const resultVisible = daily && snapshot.state === "gameover" && Boolean(challenge?.result?.finalized);
+    const service = this.challengeServiceCopy();
+    const signature = JSON.stringify({
+      daily, mode: this.mode, state: snapshot.state, service: this.challengeState?.status,
+      pending: this.challengeState?.pending, summary: this.challengeState?.summary,
+      goals: challenge?.goals, result: challenge?.result,
+    });
+    if (signature === this.lastChallengeSignature) return;
+    this.lastChallengeSignature = signature;
+
+    $("challenge-hud").hidden = !hudVisible;
+    $("challenge-result").hidden = !resultVisible;
+    this.renderChallengePreview(snapshot);
+    if (hudVisible) {
+      $("challenge-hud").dataset.paused = String(snapshot.state === "paused");
+      $("challenge-hud-title").textContent = challenge.title;
+      $("challenge-hud-time").textContent = formatTime(Math.ceil(
+        snapshot.survival?.remaining ?? Math.max(0, challenge.rules.duration - snapshot.elapsed),
+      ));
+      $("challenge-live-goals").replaceChildren(...challenge.goals.map(goal =>
+        this.challengeGoalItem(goal, { compact: true })));
+    }
+    if (!resultVisible) return;
+
+    const result = challenge.result;
+    $("challenge-grade").textContent = result.grade;
+    $("challenge-grade").dataset.grade = result.grade;
+    $("challenge-result-title").textContent = `${challenge.title} · ${result.grade} 评级`;
+    $("challenge-score").textContent = number(result.value);
+    $("challenge-percent").textContent = `${result.completion}%`;
+    $("challenge-rank").textContent = `#${result.rank}`;
+    $("challenge-kills").textContent = number(result.kills);
+    $("challenge-active-time").textContent = formatTime(result.activeSeconds);
+    $("challenge-result-goals").replaceChildren(...result.goals.map(goal => this.challengeGoalItem(goal)));
+    $("challenge-submit-note").textContent = service.note;
+    $("challenge-submit-note").dataset.state = this.challengeState?.status ?? "loading";
+  }
+
   renderMusic({ supported, enabled, volume, playing, blocked }) {
     const button = $("music-toggle");
     const percent = Math.round(volume * 100);
@@ -323,6 +441,7 @@ export class GameUI {
       $("survival-active").textContent = `${survival.active} / ${survival.total}`;
     }
     this.renderPractice(snapshot);
+    this.renderChallenge(snapshot);
     $("arena-mode-title").textContent = this.modeTitle(snapshot);
     $("opponent-legend").textContent = snapshot.network ? "其他玩家" : "AI 小球";
     $("restart-button").disabled = Boolean(snapshot.network);
@@ -416,15 +535,17 @@ export class GameUI {
     }
     $("overlay-orbit").hidden = state === "gameover" || Boolean(snapshot.network);
     $("mode-selector").hidden = Boolean(snapshot.network?.room) || (state !== "ready" && state !== "gameover");
+    $("appearance-selector").hidden = $("mode-selector").hidden;
     $("start-button").hidden = Boolean(snapshot.network);
     $("mode-description").textContent = this.mode === "survival" ?
       "每人 3 命 · 吃人加命 · 36 m 复活 · 限时 5 分钟" : "自由探索，全部分身被吃后结束。";
+    if (this.mode === "daily") $("mode-description").textContent = "每日固定种子 · 3 条命 · 3 个确定性目标 · 限时 5 分钟";
     if (this.mode === "multiplayer") $("mode-description").textContent = "生存 / 缩圈 / 2v2 · 可带人机 · 全员准备后开局";
     if (this.mode === "practice") $("mode-description").textContent = "三项独立训练 · 随时重练 · 练习成绩不计入最高分";
     $("practice-selector").hidden = this.mode !== "practice" || $("mode-selector").hidden;
     this.renderPracticeSelection();
     $("arena-mode-title").textContent = this.modeTitle(snapshot);
-    $("survival-result").hidden = !(state === "gameover" && snapshot.survival);
+    $("survival-result").hidden = !(state === "gameover" && snapshot.survival && snapshot.mode === this.mode);
     if (state === "playing") return;
 
     let copy = state === "paused" ? {
@@ -442,6 +563,13 @@ export class GameUI {
       description: "你与 13 位 AI 均以 3 条命、36 m 开局。吞噬对手最后一个分身加 1 命；被吃扣 1 命，有命立即复活，3 秒保护。",
       button: "开始生存", footnote: "5 分钟 · 命数优先排名 · 命数不限上限",
     };
+    if (state === "ready" && this.mode === "daily") copy = {
+      eyebrow: "ONE COURSE. THREE GOALS. FIVE MINUTES.",
+      title: "今日球场，每天都有新答案",
+      description: "同一固定种子、同一组三项目标。三条命，五分钟内决定今天的挑战评级。",
+      button: "开始今日挑战",
+      footnote: "北京时间每日刷新 · 暂停会冻结挑战计时",
+    };
     if ((state === "ready" || state === "gameover") && this.mode === "practice") copy = {
       eyebrow: "PRACTICE AT YOUR OWN PACE", title: "练好一招，再去球场",
       description: "用真实分裂、吐孢子和合体规则练习操作；靶球保持静止，失误后可以重练。",
@@ -452,7 +580,7 @@ export class GameUI {
       description: "继续后计时与合体冷却一起恢复，也可在上方重练或退出。",
       button: "继续练习", footnote: "空格继续 · R 重练 · C 按住聚拢",
     };
-    if (state === "gameover" && snapshot.survival) {
+    if (state === "gameover" && snapshot.survival && snapshot.mode === this.mode) {
       const { result } = snapshot;
       copy = {
         eyebrow: result.won ? "SURVIVAL CHAMPION" : "SURVIVAL ROUND COMPLETE",
@@ -470,6 +598,16 @@ export class GameUI {
           `${snapshot.survival.duration / 60} 分钟结束，领先队伍：${result.winners.join("、")}。按团队总命数、击败、总质量结算。`;
         $("survival-result").textContent = `团队第 ${result.rank} 名 · 你剩余 ${result.lives} 命 · 个人击败 ${result.kills} 次`;
       }
+    }
+    if (state === "gameover" && snapshot.mode === "daily" && this.mode === "daily" && snapshot.challenge?.result) {
+      const result = snapshot.challenge.result;
+      copy = {
+        eyebrow: "DAILY RUN COMPLETE",
+        title: `${result.grade} 评级 · 今日挑战完成`,
+        description: `完成 ${result.completedGoals} / 3 个目标，最终第 ${result.rank} 名。相同日期与种子可以再次挑战，目标组合不会改变。`,
+        button: "再挑战今日",
+        footnote: "成绩通过校验后写入每日挑战数据库",
+      };
     }
     if (snapshot.network && state === "ready") copy = {
       eyebrow: "PLAY TOGETHER", title: snapshot.network.room ? "朋友到齐，就出发" : "和朋友一起，守住微光",
@@ -530,7 +668,8 @@ export class GameUI {
   modeTitle(snapshot) {
     if (snapshot.network) return `联机 · ${{ teams: '2v2 团队', shrink: '缩圈乱斗', survival: '生存乱斗' }[snapshot.network.room?.rules?.mode] ?? '生存乱斗'}`;
     const mode = snapshot.state === "ready" ? this.mode : snapshot.mode;
-    return mode === "practice" ? "独立练习场" : mode === "survival" ? "生存 · 5 分钟" : "自由生长";
+    return mode === "practice" ? "独立练习场" : mode === "daily" ? "每日挑战 · 5 分钟" :
+      mode === "survival" ? "生存 · 5 分钟" : "自由生长";
   }
 
   renderPracticeSelection() {

@@ -2819,3 +2819,558 @@ html[data-theme="light"] #combo-hud {
     animation: none;
   }
 }
+
+/* 25. v0.26：12 款纯 Canvas 外观；预览、准备室和正式球场共享绘制逻辑。 */
+.appearance-selector {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 20px;
+  text-align: left;
+}
+
+.appearance-selector fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 11px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-raised);
+}
+
+.appearance-selector legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: .06em;
+}
+
+.appearance-selector fieldset > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.skin-card {
+  min-width: 0;
+  padding: 0 0 8px;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+
+.skin-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  transform: translateY(-1px);
+}
+
+.skin-card[data-selected="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.skin-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.skin-card canvas {
+  display: block;
+  width: 100%;
+  height: 48px;
+  margin-bottom: 7px;
+  background: #16241f;
+}
+
+.skin-card strong,
+.skin-card > span {
+  display: block;
+  padding-inline: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skin-card strong {
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.skin-card > span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+#appearance-summary {
+  min-height: 16px;
+  color: var(--accent);
+  font-size: 10px;
+  text-align: center;
+}
+
+.room-members li {
+  align-items: center;
+}
+
+.room-member-thumbnail {
+  flex: 0 0 66px;
+  width: 66px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--canvas);
+}
+
+.room-member-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+
+.room-member-copy b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.room-member-copy strong {
+  white-space: nowrap;
+}
+
+.overlay-card:has(.appearance-selector:not([hidden])),
+.overlay-card:has(.multiplayer-panel:not([hidden])) {
+  width: 450px;
+}
+
+[data-theme="light"] .skin-card canvas {
+  background: #20332d;
+}
+
+[data-theme="light"] .skin-card[data-selected="true"] {
+  background: #e4efe9;
+}
+
+@media (max-width: 760px) {
+  .overlay-card:has(.appearance-selector:not([hidden])),
+  .overlay-card:has(.multiplayer-panel:not([hidden])) {
+    width: min(450px, 100%);
+  }
+
+  .appearance-selector fieldset > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .skin-card canvas {
+    height: 44px;
+  }
+}
+
+@media (max-width: 360px) {
+  .appearance-selector fieldset {
+    padding: 9px;
+  }
+
+  .appearance-selector fieldset > div {
+    gap: 6px;
+  }
+
+  .skin-card strong,
+  .skin-card > span {
+    padding-inline: 5px;
+  }
+
+  .room-member-thumbnail {
+    flex-basis: 56px;
+    width: 56px;
+  }
+}
+
+@media (max-height: 600px) {
+  .overlay-card:has(.appearance-selector:not([hidden])) {
+    padding-block: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skin-card {
+    transition: none;
+  }
+}
+
+/* 26. v0.27：每日挑战题面、实时目标与确定性结算。 */
+.overlay-card:has(#daily-challenge-preview:not([hidden])),
+.overlay-card:has(#challenge-result:not([hidden])) {
+  width: min(520px, 100%);
+}
+
+.daily-challenge-preview,
+.challenge-result {
+  margin: 0 0 20px;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid color-mix(in srgb, var(--gold) 34%, var(--border));
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--gold) 8%, transparent), transparent 54%),
+    var(--surface-raised);
+}
+
+.challenge-preview-head,
+.challenge-result > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.challenge-preview-head > div,
+.challenge-result > header > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.challenge-preview-head h3,
+.challenge-result h3 {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.challenge-kicker {
+  color: var(--gold);
+  font: 8px/1.3 Consolas, "Courier New", monospace;
+  letter-spacing: .13em;
+}
+
+.challenge-service-status {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.challenge-service-status[data-state="saved"],
+.challenge-submit-note[data-state="saved"] {
+  color: var(--accent);
+}
+
+.challenge-service-status[data-state="offline"],
+.challenge-service-status[data-state="saving"],
+.challenge-submit-note[data-state="offline"],
+.challenge-submit-note[data-state="saving"] {
+  color: var(--gold);
+}
+
+.daily-goal-preview,
+.challenge-live-goals,
+.challenge-result-goals {
+  display: grid;
+  gap: 7px;
+  padding: 0;
+  margin: 12px 0 0;
+  list-style: none;
+}
+
+.daily-goal-preview,
+.challenge-result-goals {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.challenge-live-goals {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.daily-goal-preview li,
+.challenge-live-goals li,
+.challenge-result-goals li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.challenge-live-goals li {
+  padding: 7px 8px;
+}
+
+.challenge-goal-marker {
+  display: grid;
+  flex: 0 0 19px;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font: 10px/1 Consolas, monospace;
+}
+
+.challenge-goal-head {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.challenge-goal-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.challenge-goal-head span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font: 9px/1.4 Consolas, monospace;
+  white-space: nowrap;
+}
+
+.daily-goal-preview p,
+.challenge-result-goals p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.challenge-result-goals small {
+  display: block;
+  margin-top: 4px;
+  color: #d78878;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.daily-goal-preview li[data-state="completed"],
+.challenge-live-goals li[data-state="completed"],
+.challenge-result-goals li[data-state="completed"] {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.daily-goal-preview li[data-state="completed"] .challenge-goal-marker,
+.challenge-live-goals li[data-state="completed"] .challenge-goal-marker,
+.challenge-result-goals li[data-state="completed"] .challenge-goal-marker {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.daily-goal-preview li[data-state="failed"],
+.challenge-live-goals li[data-state="failed"],
+.challenge-result-goals li[data-state="failed"] {
+  border-color: color-mix(in srgb, #d78878 42%, var(--border));
+  background: color-mix(in srgb, #d78878 6%, var(--surface));
+}
+
+.daily-goal-preview li[data-state="failed"] .challenge-goal-marker,
+.challenge-live-goals li[data-state="failed"] .challenge-goal-marker,
+.challenge-result-goals li[data-state="failed"] .challenge-goal-marker {
+  color: #2f1715;
+  background: #d78878;
+  border-color: #d78878;
+}
+
+.challenge-summary,
+.challenge-result-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 11px;
+  padding-top: 10px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  font-size: 9px;
+}
+
+.challenge-summary strong,
+.challenge-result-metrics strong {
+  margin-left: 3px;
+  color: var(--text);
+  font: 11px/1 Consolas, monospace;
+}
+
+.challenge-preview-note,
+.challenge-submit-note {
+  min-height: 15px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.challenge-hud {
+  display: grid;
+  gap: 8px;
+  padding: 9px 13px 11px;
+  border-top: 1px solid var(--border);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--gold) 7%, transparent), transparent 72%),
+    var(--surface-raised);
+}
+
+.challenge-hud header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.challenge-hud header strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#challenge-hud-time {
+  color: var(--gold);
+  font: 12px/1 Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.challenge-hud[data-paused="true"] {
+  opacity: .72;
+}
+
+.challenge-result > header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.challenge-grade {
+  display: grid;
+  flex: 0 0 48px;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  color: var(--gold);
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--gold) 9%, var(--surface));
+  font: 700 25px/1 Georgia, serif;
+}
+
+.challenge-grade[data-grade="S"] {
+  color: #f0d58f;
+  box-shadow: 0 0 28px color-mix(in srgb, var(--gold) 24%, transparent);
+}
+
+.challenge-grade[data-grade="A"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.challenge-grade[data-grade="B"],
+.challenge-grade[data-grade="C"] {
+  color: var(--muted);
+}
+
+#challenge-score {
+  flex: 0 0 auto;
+  color: var(--text);
+  font: 22px/1 Consolas, monospace;
+}
+
+.focus-mode .arena-panel:has(#challenge-hud:not([hidden])) .canvas-container {
+  height: calc(100dvh - 286px - var(--tactical-height, 0px));
+}
+
+[data-theme="light"] .daily-challenge-preview,
+[data-theme="light"] .challenge-result {
+  background:
+    linear-gradient(135deg, #a77d2112, transparent 54%),
+    var(--surface-raised);
+}
+
+@media (max-width: 760px) {
+  .challenge-live-goals {
+    grid-template-columns: repeat(3, minmax(132px, 1fr));
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: thin;
+  }
+
+  .focus-mode .arena-panel:has(#challenge-hud:not([hidden])) .canvas-container {
+    height: calc(100dvh - 320px - var(--tactical-height, 0px));
+  }
+}
+
+@media (max-width: 420px) {
+  .daily-challenge-preview,
+  .challenge-result {
+    padding: 11px;
+  }
+
+  .challenge-preview-head {
+    align-items: flex-start;
+  }
+
+  .challenge-preview-head h3,
+  .challenge-result h3 {
+    font-size: 13px;
+  }
+
+  .challenge-summary,
+  .challenge-result-metrics {
+    gap: 7px 12px;
+  }
+
+  .challenge-hud {
+    padding-inline: 9px;
+  }
+
+  .challenge-hud .challenge-kicker {
+    display: none;
+  }
+
+  .focus-mode .arena-panel:has(#challenge-hud:not([hidden])) .canvas-container {
+    height: calc(100dvh - 336px - var(--tactical-height, 0px));
+  }
+}
+
+@media (max-height: 650px) {
+  .daily-challenge-preview,
+  .challenge-result {
+    margin-bottom: 13px;
+  }
+
+  .daily-goal-preview li,
+  .challenge-result-goals li {
+    padding-block: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .challenge-grade[data-grade="S"] {
+    box-shadow: none;
+  }
+}

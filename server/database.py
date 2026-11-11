@@ -39,6 +39,20 @@ def init_db():
             payload TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         );
+        CREATE TABLE IF NOT EXISTS challenge_runs (
+            run_id TEXT PRIMARY KEY,
+            challenge_date TEXT NOT NULL,
+            challenge_seed TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            score INTEGER NOT NULL CHECK (score >= 0),
+            completion INTEGER NOT NULL CHECK (completion BETWEEN 0 AND 100),
+            rank INTEGER,
+            grade TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS challenge_runs_date_score
+        ON challenge_runs (challenge_date, score DESC);
     """)
     connection.commit()
 

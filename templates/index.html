@@ -9,8 +9,8 @@
       微光球场 · ORBIT
     </title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0250">
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0250">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=0270">
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=0270">
     </script>
   </head>
   <body>
@@ -151,6 +151,14 @@
               <span>击败 <strong id="survival-kills">0</strong></span>
               <span>在场 <strong id="survival-active">14 / 14</strong></span>
             </div>
+            <section id="challenge-hud" class="challenge-hud" aria-label="每日挑战实时目标" hidden>
+              <header>
+                <span class="challenge-kicker">DAILY · SEEDED</span>
+                <strong id="challenge-hud-title">今日挑战</strong>
+                <span id="challenge-hud-time">05:00</span>
+              </header>
+              <ol id="challenge-live-goals" class="challenge-live-goals"></ol>
+            </section>
             <div id="network-hud" class="network-hud" hidden>
               <span id="network-hint">局域网联机 · 真人不足时自动补人机</span>
               <span id="network-quality" class="network-quality" data-quality="unknown">等待同步</span>
@@ -256,7 +264,7 @@
               <div id="combo-hud" aria-live="polite" hidden></div>
               <div id="game-overlay" class="game-overlay">
                 <div class="overlay-card">
-                  <div class="release-badge">V0.25.0 <span>阶段 6 · 设置、诊断与发布校验</span></div>
+                  <div class="release-badge">V0.27.0 <span>每日挑战 · 固定种子与长期成长</span></div>
                   <div id="overlay-orbit" class="overlay-orbit" aria-hidden="true">
                     <span>
                     </span>
@@ -281,6 +289,7 @@
                     <select id="game-mode" aria-describedby="mode-description">
                       <option value="classic">经典 · 自由生长</option>
                       <option value="survival">生存 · 5 分钟</option>
+                      <option value="daily">每日挑战 · 5 分钟</option>
                       <option value="multiplayer">联机 · 真人 + 人机（最多 4 名）</option>
                       <option value="practice">练习场 · 三项操作训练</option>
                     </select>
@@ -295,6 +304,35 @@
                       <p id="practice-description"></p>
                     </div>
                   </div>
+                  <div id="appearance-selector" class="appearance-selector">
+                    <fieldset>
+                      <legend>球球皮肤</legend>
+                      <div id="ball-skin-grid"></div>
+                    </fieldset>
+                    <fieldset>
+                      <legend>孢子皮肤</legend>
+                      <div id="spore-skin-grid"></div>
+                    </fieldset>
+                    <span id="appearance-summary" aria-live="polite"></span>
+                  </div>
+                  <section id="daily-challenge-preview" class="daily-challenge-preview" aria-labelledby="daily-challenge-title" hidden>
+                    <header class="challenge-preview-head">
+                      <div>
+                        <span class="challenge-kicker">TODAY'S COURSE · 北京时间</span>
+                        <h3 id="daily-challenge-title">今日挑战</h3>
+                      </div>
+                      <span id="challenge-service-status" class="challenge-service-status" data-state="loading">同步中</span>
+                    </header>
+                    <ol id="daily-goal-preview" class="daily-goal-preview"></ol>
+                    <div id="challenge-summary" class="challenge-summary" aria-label="个人挑战记录">
+                      <span>今日最佳 <strong id="challenge-best">0</strong></span>
+                      <span>平均完成 <strong id="challenge-completion-rate">0%</strong></span>
+                      <span>连续挑战 <strong id="challenge-streak">0 天</strong></span>
+                    </div>
+                    <p id="challenge-preview-note" class="challenge-preview-note" role="status">
+                      今日三个目标为固定组合，重开不会更换题面。
+                    </p>
+                  </section>
                   <div id="practice-overview" class="practice-overview">
                     <p id="practice-overview-copy"></p>
                     <button id="guided-practice" class="room-button" type="button">先练三招，再上球场</button>
@@ -369,6 +407,24 @@
                       </strong>
                     </div>
                   </div>
+                  <section id="challenge-result" class="challenge-result" aria-labelledby="challenge-result-title" hidden>
+                    <header>
+                      <span id="challenge-grade" class="challenge-grade" aria-label="挑战等级">C</span>
+                      <div>
+                        <span class="challenge-kicker">DAILY CHALLENGE RESULT</span>
+                        <h3 id="challenge-result-title">今日挑战结算</h3>
+                      </div>
+                      <strong id="challenge-score">0</strong>
+                    </header>
+                    <div class="challenge-result-metrics">
+                      <span>完成度 <strong id="challenge-percent">0%</strong></span>
+                      <span>最终名次 <strong id="challenge-rank">—</strong></span>
+                      <span>击败 <strong id="challenge-kills">0</strong></span>
+                      <span>有效时长 <strong id="challenge-active-time">00:00</strong></span>
+                    </div>
+                    <ol id="challenge-result-goals" class="challenge-result-goals"></ol>
+                    <p id="challenge-submit-note" class="challenge-submit-note" role="status"></p>
+                  </section>
                   <p id="survival-result" class="survival-result" hidden></p>
                   <p id="round-record-note" class="round-record-note" role="status" hidden></p>
                   <details id="round-recap" class="round-recap" open hidden>
@@ -617,7 +673,7 @@
             <i>
               /
             </i>
-            V.0250
+            V0.27.0
           </span>
         </footer>
         <noscript>

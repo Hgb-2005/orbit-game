@@ -21,6 +21,7 @@ from .game.rules import RoomRules
 from .game.maps import DEFAULT_MAP, MapValidationError, map_summary, normalize_map
 from .replication import FoodFrame
 from .replication import encode
+from .appearance import BALL_SKIN_ORDER, SPORE_SKIN_ORDER, normalize_appearance
 
 LOG = logging.getLogger(__name__)
 RECONNECT_GRACE = 10.0
@@ -71,6 +72,8 @@ class Peer:
     room: str = ""
     ready: bool = False
     team: object = None  # 准备室选择属于玩家身份，断线恢复和再来一局都会保留。
+    ball_skin: str = "mint-orbit"
+    spore_skin: str = "dew-drop"
     connected: bool = True
     reconnect_deadline: float = 0
     messages: deque = field(default_factory=lambda: deque(maxlen=32))
@@ -332,6 +335,7 @@ class RoomManager:
                 "map": map_summary(room.game_map),
                 "customRecord": room.custom_record,
                 "members": [{"id": peer.id, "name": peer.name, "ready": peer.ready, "connected": peer.connected,
+                             "ballSkin": peer.ball_skin, "sporeSkin": peer.spore_skin,
                              "team": room.world.players[pid]["team"] if room.world and pid in room.world.players
                              else peer.team if room.rules.mode == "teams" else None}
                             for pid in room.members if (peer := self.peers.get(pid))]}
@@ -436,6 +440,8 @@ class RoomManager:
                         if any(self.peers[pid].name == name for pid in room.members):
                             raise ValueError("昵称重复，请换一个名字。")
                     peer.name, peer.room, peer.ready = name, room.code, False
+                    appearance = normalize_appearance(message.get("appearance"))
+                    peer.ball_skin, peer.spore_skin = appearance["ballSkin"], appearance["sporeSkin"]
                     room.members.append(peer.id)
                     self.assign_teams(room)
                     if room.rules.mode == "teams":
@@ -454,6 +460,13 @@ class RoomManager:
                     if room.state != "waiting":
                         raise ValueError("对局中不能更改准备状态。")
                     peer.ready = message.get("ready") is True
+                    self.broadcast_room(room)
+                elif kind == "appearance":
+                    if room.state != "waiting":
+                        raise ValueError("对局中不能更改皮肤，请等房主返回准备室。")
+                    appearance = normalize_appearance(message.get("appearance"))
+                    peer.ball_skin, peer.spore_skin = appearance["ballSkin"], appearance["sporeSkin"]
+                    # 外观只广播视觉选择，不改变准备完成状态。
                     self.broadcast_room(room)
                 elif kind == 'choose_team':
                     if room.state != 'waiting' or room.rules.mode != 'teams':
@@ -496,6 +509,8 @@ class RoomManager:
                     if room.state != "waiting" or not room.members or not all(self.peers[pid].ready and self.peers[pid].connected for pid in room.members):
                         raise ValueError("需要房间内真人全部准备后开始；空位会自动补人机。")
                     participants = [{"id": pid, "name": self.peers[pid].name,
+                                     "ballSkin": self.peers[pid].ball_skin,
+                                     "sporeSkin": self.peers[pid].spore_skin,
                                      **({'team': self.peers[pid].team} if room.rules.mode == 'teams' else {})}
                                     for pid in room.members]
                     ai_count = room.rules.ai_count(len(participants))
@@ -506,6 +521,8 @@ class RoomManager:
                         team = 0 if counts[0] <= counts[1] else 1
                         participants.append({"id": f"ai-{room.code}-{index + 1}",
                                              "name": BOT_NAMES[index % len(BOT_NAMES)], "isBot": True,
+                                             "ballSkin": BALL_SKIN_ORDER[index % len(BALL_SKIN_ORDER)],
+                                             "sporeSkin": SPORE_SKIN_ORDER[index % len(SPORE_SKIN_ORDER)],
                                              **({'team': team} if room.rules.mode == 'teams' else {}),
                                              "role": ("forager", "rival", "hunter")[index % 3]})
                     # 开局时再次校验并保存房间地图；断线重连和对局状态始终引用同一份权威数据。
